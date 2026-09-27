@@ -34,6 +34,9 @@
           </div>
         </div>
 
+        <button id="changePasswordBtn" class="btn btn-secondary change-password-btn" type="button" title="Ganti password">
+          <span aria-hidden="true">🔑</span><span class="change-password-label">Ganti Password</span>
+        </button>
         <button id="headerAddTaskBtn" class="btn btn-primary">+ Tambah Tugas</button>
         <button id="logoutBtn" class="btn btn-secondary" type="button">Keluar</button>
       </div>

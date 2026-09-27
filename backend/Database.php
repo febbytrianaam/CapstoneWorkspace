@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+// Timestamp disimpan sebagai UTC. Frontend mengonversinya secara eksplisit ke WIB.
+date_default_timezone_set('UTC');
+
 final class Database
 {
     private static ?PDO $connection = null;
@@ -28,7 +31,9 @@ final class Database
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
 
+        // Samakan NOW(), CURRENT_TIMESTAMP, dan timestamp database di semua mesin.
+        self::$connection->exec("SET time_zone = '+00:00'");
+
         return self::$connection;
     }
 }
-

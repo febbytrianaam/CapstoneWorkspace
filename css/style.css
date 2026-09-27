@@ -446,7 +446,7 @@ body.is-authenticated .auth-screen {
     visibility: hidden;
   }
 
-  html.app-ready .sidebar-nav .nav-item {
+  html.app-ready.rbac-ready .sidebar-nav .nav-item {
     visibility: visible;
   }
 
@@ -640,6 +640,18 @@ body.sidebar-collapsed .theme-toggle-btn {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+
+.change-password-btn {
+  white-space: nowrap;
+}
+
+.user-device-cell {
+  max-width: 10rem;
+  color: var(--text-main);
+  font-size: 0.825rem;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 /* User Switcher Control */
@@ -1888,8 +1900,13 @@ body.sidebar-collapsed .theme-toggle-btn {
     gap: 0.5rem;
   }
   .user-switcher-label,
-  #headerAddTaskBtn {
+  #headerAddTaskBtn,
+  .change-password-label {
     display: none;
+  }
+  .change-password-btn {
+    min-width: 2.35rem;
+    padding-inline: 0.55rem;
   }
   .dash-columns {
     grid-template-columns: 1fr;
@@ -2052,6 +2069,59 @@ body.sidebar-collapsed .theme-toggle-btn {
 [data-theme="dark"] .meeting-url-btn:hover {
   background: var(--ut-blue-primary);
   color: white;
+}
+
+.meeting-card-header {
+  flex-wrap: wrap;
+}
+
+.meeting-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.45rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.66rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.meeting-status-badge.is-upcoming {
+  color: #166534;
+  background: #DCFCE7;
+  border-color: #86EFAC;
+}
+
+.meeting-status-badge.is-live {
+  color: #92400E;
+  background: #FEF3C7;
+  border-color: #FCD34D;
+}
+
+.meeting-status-badge.is-past {
+  color: #475569;
+  background: #E2E8F0;
+  border-color: #CBD5E1;
+}
+
+.meeting-status-badge.is-unknown {
+  color: #64748B;
+  background: #F1F5F9;
+  border-color: #CBD5E1;
+}
+
+.meeting-url-btn {
+  background: var(--ut-blue-primary) !important;
+  color: #FFFFFF !important;
+  border: 1px solid var(--ut-blue-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(30, 64, 175, 0.18);
+}
+
+.meeting-url-btn:hover {
+  background: #1D4ED8 !important;
+  color: #FFFFFF !important;
 }
 
 /* Task Card Meeting Tag */

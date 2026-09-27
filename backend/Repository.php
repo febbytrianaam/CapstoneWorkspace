@@ -13,7 +13,10 @@ final class Repository
     public static function create(): self
     {
         $repository = new self(Database::connection());
+        $repository->ensureUserActivityColumns();
+        $repository->ensureUtcTimestampMigration();
         $repository->ensureRbacTable();
+        $repository->ensureMeetingTaskOptional();
         $repository->ensureGuidesTable();
         return $repository;
     }
@@ -124,16 +127,30 @@ final class Repository
 
     public function snapshot(): array
     {
+        $wibNow = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
+            ->setTimezone(new DateTimeZone('Asia/Jakarta'))
+            ->format('d/m/Y H:i:s') . ' WIB';
         return [
             'timestamp' => time() * 1000,
-            'dateFormatted' => date('d/m/Y H:i:s'),
+            'dateFormatted' => $wibNow,
             'system' => 'STSI4440 Capstone Workspace MySQL',
             'currentUser' => $this->firstSuperadmin(),
             'users' => $this->usersById(),
             'tasks' => $this->tasks(),
+            'meetings' => $this->generalMeetings(),
             'notifications' => $this->notifications(),
             'auditLogs' => $this->auditLogs(),
         ];
+    }
+
+    public function touchUserPresence(string $userId): void
+    {
+        if ($userId === '') {
+            return;
+        }
+
+        $stmt = $this->db->prepare('UPDATE users SET last_seen_at = NOW() WHERE id = :id');
+        $stmt->execute(['id' => $userId]);
     }
 
     public function usersById(): array
@@ -155,8 +172,37 @@ final class Repository
             return null;
         }
 
-        $this->db->prepare('UPDATE users SET last_login_at = NOW() WHERE id = :id')->execute(['id' => $row['id']]);
+        $device = substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? 'Unknown device'), 0, 255);
+        $this->db->prepare(
+            'UPDATE users
+             SET last_login_at = NOW(), last_seen_at = NOW(), last_login_device = :device
+             WHERE id = :id'
+        )->execute(['id' => $row['id'], 'device' => $device]);
         $row['last_login_at'] = date('Y-m-d H:i:s');
+        $row['last_seen_at'] = $row['last_login_at'];
+        $row['last_login_device'] = $device;
+        return $this->mapUser($row);
+    }
+
+    public function changePassword(string $userId, string $currentPassword, string $newPassword): array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $userId]);
+        $row = $stmt->fetch();
+        if (!$row || !password_verify($currentPassword, $row['password_hash'])) {
+            throw new InvalidArgumentException('Password saat ini tidak sesuai.');
+        }
+
+        $this->db->prepare(
+            'UPDATE users SET password_hash = :password_hash, password_changed_at = NOW(), last_seen_at = NOW() WHERE id = :id'
+        )->execute([
+            'id' => $userId,
+            'password_hash' => password_hash($newPassword, PASSWORD_DEFAULT),
+        ]);
+
+        $row['password_changed_at'] = date('Y-m-d H:i:s');
+        $row['last_seen_at'] = date('Y-m-d H:i:s');
+        $this->logAudit('Ubah Password', 'Mengubah password akun pengguna "' . $row['name'] . '"');
         return $this->mapUser($row);
     }
 
@@ -167,8 +213,8 @@ final class Repository
         $username = strtolower((string) ($data['username'] ?? preg_replace('/[^a-z0-9]+/i', '.', $id)));
         $initial = strtoupper(substr(preg_replace('/[^a-z0-9]/i', '', $name), 0, 2)) ?: 'US';
         $stmt = $this->db->prepare(
-            'INSERT INTO users (id, username, password_hash, name, full_name, nim, role, color, initial)
-             VALUES (:id, :username, :password_hash, :name, :full_name, :nim, :role, :color, :initial)'
+            'INSERT INTO users (id, username, password_hash, name, full_name, nim, role, color, initial, password_changed_at)
+             VALUES (:id, :username, :password_hash, :name, :full_name, :nim, :role, :color, :initial, NOW())'
         );
         $stmt->execute([
             'id' => $id,
@@ -293,13 +339,18 @@ final class Repository
     public function createMeeting(array $data): array
     {
         $id = $data['id'] ?? ('m-' . time());
+        $taskIdValue = array_key_exists('taskId', $data) ? $data['taskId'] : ($data['task_id'] ?? null);
+        $taskId = trim((string) $taskIdValue) !== '' ? trim((string) $taskIdValue) : null;
+        $phase = trim((string) ($data['phase'] ?? '')) ?: null;
+        $this->assertMeetingTask($taskId);
         $stmt = $this->db->prepare(
-            'INSERT INTO meetings (id, task_id, title, starts_at, ends_at, url, notes, host)
-             VALUES (:id, :task_id, :title, :starts_at, :ends_at, :url, :notes, :host)'
+            'INSERT INTO meetings (id, task_id, phase, title, starts_at, ends_at, url, notes, host)
+             VALUES (:id, :task_id, :phase, :title, :starts_at, :ends_at, :url, :notes, :host)'
         );
         $stmt->execute([
             'id' => $id,
-            'task_id' => $data['taskId'] ?? $data['task_id'] ?? '',
+            'task_id' => $taskId,
+            'phase' => $phase,
             'title' => $data['title'] ?? 'Agenda Pertemuan Baru',
             'starts_at' => $this->normalizeDateTime($data['date'] ?? $data['starts_at'] ?? null),
             'ends_at' => $this->normalizeDateTime($data['endDate'] ?? $data['ends_at'] ?? null),
@@ -309,6 +360,43 @@ final class Repository
         ]);
         $this->logAudit('Tambah Pertemuan', 'Menambahkan agenda pertemuan "' . ($data['title'] ?? 'Agenda Pertemuan Baru') . '"');
         return $this->meetingById($id);
+    }
+
+    public function updateMeeting(string $id, array $data): array
+    {
+        $existing = $this->meetingRowById($id);
+        $taskIdValue = array_key_exists('taskId', $data) ? $data['taskId'] : ($data['task_id'] ?? $existing['task_id']);
+        $taskId = trim((string) $taskIdValue) !== '' ? trim((string) $taskIdValue) : null;
+        $phase = array_key_exists('phase', $data) ? (trim((string) $data['phase']) ?: null) : ($existing['phase'] ?? null);
+        $this->assertMeetingTask($taskId);
+
+        $stmt = $this->db->prepare(
+            'UPDATE meetings
+             SET task_id = :task_id, phase = :phase, title = :title, starts_at = :starts_at, ends_at = :ends_at,
+                 url = :url, notes = :notes, host = :host
+             WHERE id = :id AND deleted_at IS NULL'
+        );
+        $stmt->execute([
+            'id' => $id,
+            'task_id' => $taskId,
+            'phase' => $phase,
+            'title' => $data['title'] ?? $existing['title'],
+            'starts_at' => $this->normalizeDateTime($data['date'] ?? $data['starts_at'] ?? $existing['starts_at']),
+            'ends_at' => $this->normalizeDateTime($data['endDate'] ?? $data['ends_at'] ?? $existing['ends_at']),
+            'url' => $data['url'] ?? ($existing['url'] ?? ''),
+            'notes' => $data['notes'] ?? ($existing['notes'] ?? ''),
+            'host' => $data['host'] ?? ($existing['host'] ?? null),
+        ]);
+        $this->logAudit('Ubah Pertemuan', 'Memperbarui agenda pertemuan "' . ($data['title'] ?? $existing['title']) . '"');
+        return $this->meetingById($id);
+    }
+
+    public function generalMeetings(): array
+    {
+        $rows = $this->db->query(
+            'SELECT * FROM meetings WHERE task_id IS NULL AND deleted_at IS NULL ORDER BY starts_at, id'
+        )->fetchAll();
+        return array_map(fn (array $row): array => $this->mapMeeting($row), $rows);
     }
 
     public function deleteMeeting(string $id): void
@@ -445,13 +533,18 @@ final class Repository
 
     private function meetingById(string $id): array
     {
+        return $this->mapMeeting($this->meetingRowById($id));
+    }
+
+    private function meetingRowById(string $id): array
+    {
         $stmt = $this->db->prepare('SELECT * FROM meetings WHERE id = :id');
         $stmt->execute(['id' => $id]);
         $row = $stmt->fetch();
         if (!$row) {
             throw new RuntimeException('Pertemuan tidak ditemukan.');
         }
-        return $this->mapMeeting($row);
+        return $row;
     }
 
     private function mapTask(array $row): array
@@ -482,6 +575,8 @@ final class Repository
     {
         return [
             'id' => $row['id'],
+            'taskId' => $row['task_id'] ?? null,
+            'phase' => $row['phase'] ?? null,
             'title' => $row['title'],
             'date' => $this->formatLocalDateTime($row['starts_at']),
             'endDate' => $this->formatLocalDateTime($row['ends_at']),
@@ -491,6 +586,18 @@ final class Repository
             'hasBeritaAcara' => $row['berita_acara_at'] !== null,
             'deletedAt' => $row['deleted_at'] ?? null,
         ];
+    }
+
+    private function assertMeetingTask(?string $taskId): void
+    {
+        if ($taskId === null) {
+            return;
+        }
+        $stmt = $this->db->prepare('SELECT id FROM tasks WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $taskId]);
+        if (!$stmt->fetchColumn()) {
+            throw new RuntimeException('Tugas terkait tidak ditemukan.');
+        }
     }
 
     private function mapUser(array $row): array
@@ -505,7 +612,10 @@ final class Repository
             'roles' => $row['role'] === 'superadmin' ? ['superadmin', 'koordinator'] : [$row['role']],
             'color' => $row['color'],
             'initial' => $row['initial'],
-            'lastLogin' => strtotime($row['last_login_at'] ?? 'now') * 1000,
+            'lastLogin' => $row['last_login_at'] ? strtotime($row['last_login_at']) * 1000 : null,
+            'lastSeen' => $row['last_seen_at'] ? strtotime($row['last_seen_at']) * 1000 : null,
+            'lastLoginDevice' => $row['last_login_device'] ?? '',
+            'passwordChangedAt' => $row['password_changed_at'] ? strtotime($row['password_changed_at']) * 1000 : null,
         ];
     }
 
@@ -564,8 +674,8 @@ final class Repository
         );
         $stmt->execute([
             'id' => 'a-' . time() . random_int(100, 999),
-            'user_name' => 'System',
-            'role' => 'system',
+            'user_name' => $_SERVER['HTTP_X_USER'] ?? 'System',
+            'role' => $_SERVER['HTTP_X_ROLE'] ?? 'system',
             'action' => $action,
             'action_tag' => strtolower(str_replace(' ', '_', $action)),
             'details' => $details,
@@ -605,6 +715,72 @@ final class Repository
         );
     }
 
+    private function ensureUserActivityColumns(): void
+    {
+        $columns = $this->db->query('SHOW COLUMNS FROM users')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('last_seen_at', $columns, true)) {
+            $this->db->exec('ALTER TABLE users ADD COLUMN last_seen_at DATETIME NULL AFTER last_login_at');
+        }
+        if (!in_array('last_login_device', $columns, true)) {
+            $this->db->exec('ALTER TABLE users ADD COLUMN last_login_device VARCHAR(255) NULL AFTER last_seen_at');
+        }
+        if (!in_array('password_changed_at', $columns, true)) {
+            $this->db->exec('ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL AFTER last_login_device');
+        }
+        $this->db->exec('UPDATE users SET password_changed_at = COALESCE(password_changed_at, created_at, NOW()) WHERE password_changed_at IS NULL');
+    }
+
+    private function ensureUtcTimestampMigration(): void
+    {
+        $this->db->exec(
+            'CREATE TABLE IF NOT EXISTS app_migrations (
+                migration_key VARCHAR(120) PRIMARY KEY,
+                applied_at DATETIME NOT NULL
+            ) ENGINE=InnoDB'
+        );
+
+        $migrationKey = '20260927_normalize_legacy_wib_timestamps';
+        $stmt = $this->db->prepare(
+            'INSERT IGNORE INTO app_migrations (migration_key, applied_at)
+             VALUES (:migration_key, UTC_TIMESTAMP())'
+        );
+        $stmt->execute(['migration_key' => $migrationKey]);
+        if ($stmt->rowCount() > 0) {
+            // Sebelum aplikasi memaksa sesi MySQL ke UTC, beberapa NOW() tersimpan sebagai WIB.
+            // Nilai aktivitas yang lebih besar dari waktu UTC saat ini pasti berasal dari campuran lama.
+            $legacyColumns = [
+                'users' => ['last_login_at', 'last_seen_at', 'password_changed_at'],
+                'audit_logs' => ['occurred_at'],
+                'notifications' => ['occurred_at'],
+                'project_guides' => ['created_at'],
+            ];
+            foreach ($legacyColumns as $table => $columns) {
+                foreach ($columns as $column) {
+                    $this->db->exec(
+                        "UPDATE {$table} SET {$column} = DATE_SUB({$column}, INTERVAL 7 HOUR)
+                         WHERE {$column} IS NOT NULL AND {$column} > UTC_TIMESTAMP()"
+                    );
+                }
+            }
+        }
+
+        $seedLoginMigrationKey = '20260927_normalize_legacy_seed_login_dates';
+        $stmt = $this->db->prepare(
+            'INSERT IGNORE INTO app_migrations (migration_key, applied_at)
+             VALUES (:migration_key, UTC_TIMESTAMP())'
+        );
+        $stmt->execute(['migration_key' => $seedLoginMigrationKey]);
+        if ($stmt->rowCount() > 0) {
+            // Akun seed yang belum pernah terlihat sejak aplikasi memakai UTC masih membawa waktu WIB lama.
+            $this->db->exec(
+                'UPDATE users SET last_login_at = DATE_SUB(last_login_at, INTERVAL 7 HOUR)
+                 WHERE last_login_at IS NOT NULL
+                   AND last_seen_at IS NULL
+                   AND last_login_at > UTC_TIMESTAMP()'
+            );
+        }
+    }
+
     private function ensureGuidesTable(): void
     {
         $this->db->exec(
@@ -621,6 +797,36 @@ final class Repository
                 INDEX idx_project_guides_created (created_at)
             ) ENGINE=InnoDB'
         );
+        $this->db->exec(
+            "UPDATE project_guides SET uploaded_by = 'System'
+             WHERE uploaded_by IN ('Superadmin', 'Koordinator')"
+        );
+    }
+
+    private function ensureMeetingTaskOptional(): void
+    {
+        $tables = $this->db->query("SHOW TABLES LIKE 'meetings'")->fetchAll(PDO::FETCH_COLUMN);
+        if (!$tables) {
+            return;
+        }
+        $columns = $this->db->query('SHOW COLUMNS FROM meetings')->fetchAll();
+        foreach ($columns as $column) {
+            if ($column['Field'] === 'task_id' && strtoupper((string) $column['Null']) === 'NO') {
+                $this->db->exec('ALTER TABLE meetings MODIFY task_id VARCHAR(80) NULL');
+            }
+            if ($column['Field'] === 'task_id') {
+                $hasPhase = false;
+                foreach ($columns as $candidate) {
+                    if ($candidate['Field'] === 'phase') {
+                        $hasPhase = true;
+                        break;
+                    }
+                }
+                if (!$hasPhase) {
+                    $this->db->exec('ALTER TABLE meetings ADD COLUMN phase VARCHAR(20) NULL AFTER task_id');
+                }
+                break;
+            }
+        }
     }
 }
-

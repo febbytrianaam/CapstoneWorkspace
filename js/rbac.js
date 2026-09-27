@@ -77,6 +77,8 @@
       }
     } catch (error) {
       console.info('Permission RBAC backend belum tersedia, memakai matrix lokal.', error);
+    } finally {
+      document.documentElement.classList.add('rbac-ready');
     }
   }
 

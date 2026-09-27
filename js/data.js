@@ -9,6 +9,7 @@ const AUTH_KEY = 'capstone_auth_v1';
 const USERS_LIST_KEY = 'capstone_users_list_v3';
 const NOTIFS_KEY = 'capstone_notifications_v3';
 const AUDIT_LOGS_KEY = 'capstone_audit_logs_v3';
+const MEETINGS_KEY = 'capstone_general_meetings_v1';
 const API_BASE = window.CAPSTONE_API_BASE || 'backend/api/index.php';
 
 // Dataset Pengguna Awal (Febby adalah Superadmin!)
@@ -528,6 +529,7 @@ class DataStore {
     this.tasks = this.loadTasks();
     this.notifications = this.loadNotifications();
     this.auditLogs = this.loadAuditLogs();
+    this.meetings = this.loadGeneralMeetings();
     this.currentUser = this.loadUser();
     // Database menjadi sumber utama; localStorage hanya cache/fallback saat backend tidak tersedia.
     this.ready = this.syncFromBackend();
@@ -538,7 +540,11 @@ class DataStore {
 
     try {
       const response = await fetch(`${API_BASE}?resource=snapshot`, {
-        headers: { Accept: 'application/json', 'X-Role': this.currentUser?.role || 'member' }
+        headers: {
+          Accept: 'application/json',
+          'X-Role': this.currentUser?.role || 'member',
+          'X-User-Id': this.currentUser?.id || ''
+        }
       });
       if (!response.ok) return;
 
@@ -550,6 +556,7 @@ class DataStore {
       this.tasks = snapshot.tasks || this.tasks;
       this.notifications = snapshot.notifications || this.notifications;
       this.auditLogs = snapshot.auditLogs || this.auditLogs;
+      this.meetings = Array.isArray(snapshot.meetings) ? snapshot.meetings : this.meetings;
 
       const savedId = localStorage.getItem(USER_KEY);
       this.currentUser = savedId && this.users[savedId]
@@ -560,6 +567,7 @@ class DataStore {
       this.saveUsers();
       this.saveNotifications();
       this.saveAuditLogs();
+      this.saveMeetings();
       if (this.currentUser) localStorage.setItem(USER_KEY, this.currentUser.id);
 
       window.dispatchEvent(new CustomEvent('capstone:data-synced'));
@@ -578,11 +586,17 @@ class DataStore {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          'X-Role': this.currentUser?.role || 'member'
+          'X-Role': this.currentUser?.role || 'member',
+          'X-User': this.currentUser?.name || 'System',
+          'X-User-Id': this.currentUser?.id || ''
         },
         body: body ? JSON.stringify(body) : null
       });
-      return response.ok ? response.json() : null;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        console.error(`Backend ${method} ${resource} gagal:`, payload?.message || response.statusText);
+      }
+      return payload;
     } catch (e) {
       console.info('Sinkronisasi backend gagal, data lokal tetap dipakai.', e);
       return null;
@@ -593,7 +607,11 @@ class DataStore {
     if (window.location.protocol === 'file:') return [];
     try {
       const response = await fetch(`${API_BASE}?resource=guides`, {
-        headers: { Accept: 'application/json', 'X-Role': this.currentUser?.role || 'member' }
+        headers: {
+          Accept: 'application/json',
+          'X-Role': this.currentUser?.role || 'member',
+          'X-User-Id': this.currentUser?.id || ''
+        }
       });
       if (!response.ok) return [];
       const payload = await response.json();
@@ -612,7 +630,11 @@ class DataStore {
     try {
       const response = await fetch(`${API_BASE}?resource=guides`, {
         method: 'POST',
-        headers: { Accept: 'application/json', 'X-Role': this.currentUser?.role || 'member' },
+        headers: {
+          Accept: 'application/json',
+          'X-Role': this.currentUser?.role || 'member',
+          'X-User-Id': this.currentUser?.id || ''
+        },
         body: formData
       });
       return response.ok ? response.json() : null;
@@ -626,6 +648,41 @@ class DataStore {
     return this.sendToBackend('guides', 'DELETE', null, { id });
   }
 
+  async changePassword(currentPassword, newPassword) {
+    if (window.location.protocol === 'file:') return null;
+
+    const search = new URLSearchParams({ resource: 'auth' });
+    try {
+      const response = await fetch(`${API_BASE}?${search.toString()}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-Role': this.currentUser?.role || 'member',
+          'X-User': this.currentUser?.name || 'System',
+          'X-User-Id': this.currentUser?.id || ''
+        },
+        body: JSON.stringify({
+          action: 'change_password',
+          currentPassword,
+          newPassword
+        })
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        return {
+          ok: false,
+          message: payload?.message || 'Password gagal diubah.'
+        };
+      }
+      if (payload?.ok && payload.data) this.setAuthenticatedUser(payload.data);
+      return payload;
+    } catch (e) {
+      console.info('Perubahan password gagal disinkronkan.', e);
+      return { ok: false, message: 'Server tidak dapat dihubungi.' };
+    }
+  }
+
   /* ==========================================
      Manajemen Rekam Jejak Audit (Audit Trail Log)
      ========================================== */
@@ -637,7 +694,7 @@ class DataStore {
     }
     try {
       const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed) || parsed.length === 0) {
+      if (!Array.isArray(parsed)) {
         localStorage.setItem(AUDIT_LOGS_KEY, JSON.stringify(DEFAULT_AUDIT_LOGS));
         return JSON.parse(JSON.stringify(DEFAULT_AUDIT_LOGS));
       }
@@ -871,6 +928,26 @@ class DataStore {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(this.tasks));
   }
 
+  loadGeneralMeetings() {
+    const raw = localStorage.getItem(MEETINGS_KEY);
+    if (!raw) return [];
+    try {
+      const meetings = JSON.parse(raw);
+      return Array.isArray(meetings) ? meetings : [];
+    } catch (e) {
+      console.error('Gagal membaca meeting umum dari cache lokal:', e);
+      return [];
+    }
+  }
+
+  saveMeetings() {
+    localStorage.setItem(MEETINGS_KEY, JSON.stringify(this.meetings));
+  }
+
+  getMeetings() {
+    return this.meetings;
+  }
+
   saveDefault() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_TASKS));
   }
@@ -880,10 +957,12 @@ class DataStore {
     this.users = JSON.parse(JSON.stringify(DEFAULT_USERS));
     this.notifications = JSON.parse(JSON.stringify(DEFAULT_NOTIFICATIONS));
     this.auditLogs = JSON.parse(JSON.stringify(DEFAULT_AUDIT_LOGS));
+    this.meetings = [];
     this.save();
     this.saveUsers();
     this.saveNotifications();
     this.saveAuditLogs();
+    this.saveMeetings();
     return this.tasks;
   }
 
@@ -932,7 +1011,90 @@ class DataStore {
     return null;
   }
 
+  createMeeting(meetingData) {
+    const taskId = meetingData.taskId || null;
+    const meeting = {
+      id: meetingData.id || `m-${Date.now()}`,
+      title: meetingData.title || 'Agenda Pertemuan Baru',
+      phase: meetingData.phase || null,
+      date: meetingData.date || '',
+      endDate: meetingData.endDate || '',
+      host: meetingData.host || '',
+      url: meetingData.url || '',
+      notes: meetingData.notes || '',
+      taskId,
+      hasBeritaAcara: false
+    };
+
+    if (taskId) {
+      const task = this.getById(taskId);
+      if (!task) return { ok: false, message: 'Tugas terkait tidak ditemukan.' };
+      task.meetings = [...(task.meetings || []), meeting];
+      this.save();
+    } else {
+      this.meetings.push(meeting);
+      this.saveMeetings();
+    }
+
+    this.logAudit('Tambah Pertemuan', `Menambahkan agenda pertemuan "${meeting.title}"`);
+    this.sendToBackend('meetings', 'POST', meeting);
+    return { ok: true, meeting };
+  }
+
+  updateMeeting(meetingId, meetingData) {
+    let existing = this.meetings.find(m => m.id === meetingId) || null;
+    let sourceTask = null;
+    if (!existing) {
+      for (const task of this.tasks) {
+        const candidate = (task.meetings || []).find(m => m.id === meetingId);
+        if (candidate) {
+          existing = candidate;
+          sourceTask = task;
+          break;
+        }
+      }
+    }
+    if (!existing) return { ok: false, message: 'Pertemuan tidak ditemukan.' };
+
+    const targetTaskId = Object.prototype.hasOwnProperty.call(meetingData, 'taskId')
+      ? (meetingData.taskId || null)
+      : (sourceTask?.id || null);
+    if (targetTaskId && !this.getById(targetTaskId)) {
+      return { ok: false, message: 'Tugas terkait tidak ditemukan.' };
+    }
+
+    const updated = { ...existing, ...meetingData, id: meetingId, taskId: targetTaskId, phase: meetingData.phase ?? existing.phase ?? null };
+    this.meetings = this.meetings.filter(m => m.id !== meetingId);
+    this.tasks.forEach(task => {
+      task.meetings = (task.meetings || []).filter(m => m.id !== meetingId);
+    });
+
+    if (targetTaskId) {
+      const targetTask = this.getById(targetTaskId);
+      targetTask.meetings = [...(targetTask.meetings || []), updated];
+    } else {
+      this.meetings.push(updated);
+    }
+    this.save();
+    this.saveMeetings();
+    this.logAudit('Ubah Pertemuan', `Memperbarui agenda pertemuan "${updated.title}"`);
+    this.sendToBackend('meetings', 'PUT', { action: 'update', ...updated }, { id: meetingId });
+    return { ok: true, meeting: updated };
+  }
+
   deleteMeeting(taskId, meetingId) {
+    if (!taskId) {
+      const meeting = this.meetings.find(m => m.id === meetingId);
+      if (!meeting) return { ok: false, message: 'Pertemuan tidak ditemukan.' };
+      if (meeting.hasBeritaAcara) {
+        return { ok: false, message: 'Pertemuan yang sudah memiliki berita acara tidak boleh dihapus.' };
+      }
+      this.meetings = this.meetings.filter(m => m.id !== meetingId);
+      this.saveMeetings();
+      this.logAudit('Hapus Pertemuan', `Soft delete pertemuan "${meeting.title}"`);
+      this.sendToBackend('meetings', 'DELETE', null, { id: meetingId });
+      return { ok: true, meeting };
+    }
     const task = this.getById(taskId);
     const meeting = task?.meetings?.find(m => m.id === meetingId);
     if (!task || !meeting) return { ok: false, message: 'Pertemuan tidak ditemukan.' };
@@ -948,6 +1110,14 @@ class DataStore {
   }
 
   markMeetingBeritaAcara(taskId, meetingId) {
+    if (!taskId) {
+      const meeting = this.meetings.find(m => m.id === meetingId);
+      if (!meeting) return null;
+      meeting.hasBeritaAcara = true;
+      this.saveMeetings();
+      this.sendToBackend('meetings', 'PUT', { action: 'mark_berita_acara' }, { id: meetingId });
+      return meeting;
+    }
     const task = this.getById(taskId);
     const meeting = task?.meetings?.find(m => m.id === meetingId);
     if (!task || !meeting) return null;
@@ -986,13 +1156,18 @@ class DataStore {
   getSnapshotJSON() {
     const snapshot = {
       timestamp: Date.now(),
-      dateFormatted: new Date().toLocaleString('id-ID'),
+      dateFormatted: new Intl.DateTimeFormat('id-ID', {
+        dateStyle: 'short',
+        timeStyle: 'medium',
+        timeZone: 'Asia/Jakarta'
+      }).format(new Date()),
       system: 'STSI4440 Capstone Workspace v3.2',
       currentUser: this.currentUser,
       users: this.users,
       tasks: this.tasks,
       notifications: this.notifications,
-      auditLogs: this.auditLogs
+      auditLogs: this.auditLogs,
+      meetings: this.meetings
     };
     return JSON.stringify(snapshot, null, 2);
   }

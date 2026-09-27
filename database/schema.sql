@@ -3,6 +3,7 @@ CREATE DATABASE IF NOT EXISTS capstone_workspace
   COLLATE utf8mb4_unicode_ci;
 
 USE capstone_workspace;
+SET time_zone = '+00:00';
 
 CREATE TABLE IF NOT EXISTS users (
   id VARCHAR(80) PRIMARY KEY,
@@ -15,6 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
   color VARCHAR(20) NOT NULL DEFAULT '#2563EB',
   initial VARCHAR(8) NOT NULL,
   last_login_at DATETIME NULL,
+  last_seen_at DATETIME NULL,
+  last_login_device VARCHAR(255) NULL,
+  password_changed_at DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -36,7 +40,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE TABLE IF NOT EXISTS task_checklist_items (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  task_id VARCHAR(80) NOT NULL,
+  task_id VARCHAR(80) NULL,
   item_order INT UNSIGNED NOT NULL DEFAULT 1,
   text VARCHAR(255) NOT NULL,
   is_done TINYINT(1) NOT NULL DEFAULT 0,
@@ -49,7 +53,8 @@ CREATE TABLE IF NOT EXISTS task_checklist_items (
 
 CREATE TABLE IF NOT EXISTS meetings (
   id VARCHAR(80) PRIMARY KEY,
-  task_id VARCHAR(80) NOT NULL,
+  task_id VARCHAR(80) NULL,
+  phase VARCHAR(20) NULL,
   title VARCHAR(255) NOT NULL,
   starts_at DATETIME NOT NULL,
   ends_at DATETIME NULL,
@@ -116,12 +121,12 @@ CREATE TABLE IF NOT EXISTS project_guides (
   INDEX idx_project_guides_created (created_at)
 ) ENGINE=InnoDB;
 
-INSERT INTO users (id, username, password_hash, name, full_name, nim, role, color, initial, last_login_at) VALUES
-('Febby', 'febby', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Febby', 'Febby Triana Amalia', '050627749', 'superadmin', '#1E40AF', 'FB', NOW()),
-('Cintia', 'cintia', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Cintia', 'Rohatul Cintia Nurfajar', '050765966', 'member', '#7C3AED', 'CT', DATE_SUB(NOW(), INTERVAL 45 MINUTE)),
-('Rival', 'rival', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Rival', 'Rival Fauzi', '051391346', 'member', '#059669', 'RV', DATE_SUB(NOW(), INTERVAL 3 HOUR)),
-('Farah', 'farah', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Farah', 'Farah Syahira', '051417488', 'member', '#DB2777', 'FR', DATE_SUB(NOW(), INTERVAL 1 DAY)),
-('Anggi', 'anggi', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Anggi', 'Anggi Hermawan', '051316918', 'member', '#EA580C', 'AG', DATE_SUB(NOW(), INTERVAL 2 DAY))
+INSERT INTO users (id, username, password_hash, name, full_name, nim, role, color, initial, last_login_at, password_changed_at) VALUES
+('Febby', 'febby', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Febby', 'Febby Triana Amalia', '050627749', 'superadmin', '#1E40AF', 'FB', NOW(), NOW()),
+('Cintia', 'cintia', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Cintia', 'Rohatul Cintia Nurfajar', '050765966', 'member', '#7C3AED', 'CT', DATE_SUB(NOW(), INTERVAL 45 MINUTE), NOW()),
+('Rival', 'rival', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Rival', 'Rival Fauzi', '051391346', 'member', '#059669', 'RV', DATE_SUB(NOW(), INTERVAL 3 HOUR), NOW()),
+('Farah', 'farah', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Farah', 'Farah Syahira', '051417488', 'member', '#DB2777', 'FR', DATE_SUB(NOW(), INTERVAL 1 DAY), NOW()),
+('Anggi', 'anggi', '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK', 'Anggi', 'Anggi Hermawan', '051316918', 'member', '#EA580C', 'AG', DATE_SUB(NOW(), INTERVAL 2 DAY), NOW())
 ON DUPLICATE KEY UPDATE username = VALUES(username), password_hash = VALUES(password_hash), name = VALUES(name), full_name = VALUES(full_name), nim = VALUES(nim), role = VALUES(role), color = VALUES(color), initial = VALUES(initial);
 
 INSERT INTO tasks (id, phase, title, pic, status, priority, description) VALUES
@@ -161,4 +166,3 @@ INSERT INTO audit_logs (id, occurred_at, user_name, role, action, action_tag, ob
 ('a-101', DATE_SUB(NOW(), INTERVAL 8 MINUTE), 'Febby', 'superadmin', 'Ubah Status', 'update_status', 'Tugas', 't-101', 'Konsultasikan judul project dan ketentuan penggunaan data', 'Mengubah status tugas dari Belum Dimulai menjadi Sedang Dikerjakan', JSON_ARRAY(JSON_OBJECT('field', 'Status', 'from', 'Belum Dimulai', 'to', 'Sedang Dikerjakan')), '192.168.1.45', 'Seed Data'),
 ('a-102', DATE_SUB(NOW(), INTERVAL 18 MINUTE), 'Febby', 'superadmin', 'Centang Checklist', 'checklist_toggle', 'Tugas', 't-101', 'Konsultasikan judul project dan ketentuan penggunaan data', 'Menyelesaikan checklist awal tugas proposal', JSON_ARRAY(), '192.168.1.45', 'Seed Data')
 ON DUPLICATE KEY UPDATE details = VALUES(details), occurred_at = VALUES(occurred_at);
-

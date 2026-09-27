@@ -6,7 +6,7 @@ require_once __DIR__ . '/../Response.php';
 require_once __DIR__ . '/../Repository.php';
 
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Headers: Content-Type, X-Role');
+header('Access-Control-Allow-Headers: Content-Type, X-Role, X-User, X-User-Id');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -33,6 +33,7 @@ try {
     }
 
     if ($resource === 'snapshot' && $method === 'GET') {
+        $repo->touchUserPresence((string) ($_SERVER['HTTP_X_USER_ID'] ?? ''));
         Response::json(['ok' => true, 'data' => $repo->snapshot()]);
     }
 
@@ -52,7 +53,7 @@ try {
 
     if ($resource === 'guides' && $method === 'GET') {
         $id = (string) ($_GET['id'] ?? '');
-        if ($id !== '' && isset($_GET['download'])) {
+        if ($id !== '' && (isset($_GET['download']) || isset($_GET['view']))) {
             $file = $repo->projectGuideFile($id);
             $downloadName = str_replace(['"', "\r", "\n"], '', basename($file['original_name']));
             header('Content-Type: ' . $file['mime_type']);
@@ -88,8 +89,7 @@ try {
         $mimeType = function_exists('finfo_open')
             ? (new finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name'])
             : ((string) ($file['type'] ?? 'application/octet-stream'));
-        $authRole = $_SERVER['HTTP_X_ROLE'] ?? 'member';
-        $uploadUser = $authRole === 'superadmin' ? 'Superadmin' : 'Koordinator';
+        $uploadUser = 'System';
         Response::json(['ok' => true, 'data' => $repo->createProjectGuide([
             'title' => $title,
             'original_name' => basename((string) $file['name']),
@@ -119,6 +119,16 @@ try {
         Response::json(['ok' => true, 'data' => $user]);
     }
 
+    if ($resource === 'auth' && $method === 'PUT' && ($input['action'] ?? '') === 'change_password') {
+        $userId = (string) ($_SERVER['HTTP_X_USER_ID'] ?? '');
+        $currentPassword = (string) ($input['currentPassword'] ?? '');
+        $newPassword = (string) ($input['newPassword'] ?? '');
+        if ($userId === '' || $currentPassword === '' || strlen($newPassword) < 3) {
+            Response::error('Password saat ini dan password baru minimal 3 karakter wajib diisi.', 422);
+        }
+        Response::json(['ok' => true, 'data' => $repo->changePassword($userId, $currentPassword, $newPassword)]);
+    }
+
     if ($resource === 'tasks') {
         if ($method === 'GET') {
             Response::json(['ok' => true, 'data' => $repo->tasks()]);
@@ -145,6 +155,9 @@ try {
 
     if ($resource === 'meetings') {
         $id = $_GET['id'] ?? '';
+        if ($method === 'GET') {
+            Response::json(['ok' => true, 'data' => $repo->generalMeetings()]);
+        }
         if ($method === 'POST') {
             Response::json(['ok' => true, 'data' => $repo->createMeeting($input)], 201);
         }
@@ -160,6 +173,12 @@ try {
                 Response::error('Parameter id wajib diisi.', 422);
             }
             Response::json(['ok' => true, 'data' => $repo->markMeetingBeritaAcara($id)]);
+        }
+        if ($method === 'PUT') {
+            if (!$id) {
+                Response::error('Parameter id wajib diisi.', 422);
+            }
+            Response::json(['ok' => true, 'data' => $repo->updateMeeting($id, $input)]);
         }
     }
 
@@ -211,7 +230,8 @@ try {
     }
 
     Response::error('Endpoint tidak ditemukan.', 404);
+} catch (InvalidArgumentException $e) {
+    Response::error($e->getMessage(), 422);
 } catch (Throwable $e) {
     Response::error($e->getMessage(), 500);
 }
-

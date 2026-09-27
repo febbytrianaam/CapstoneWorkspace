@@ -41,6 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Inisialisasi UI & Pengendali Komponen
   initTheme();
   initAuthentication();
+  initChangePassword();
   initSidebarToggle();
   initUserSwitcher();
   initNotificationSystem();
@@ -51,9 +52,13 @@ document.addEventListener('DOMContentLoaded', () => {
   initBeritaAcaraSystem();
   initGlobalButtons();
   initFlowDocuments();
-  window.addEventListener('capstone:data-synced', renderCurrentView);
+  window.addEventListener('capstone:data-synced', () => {
+    syncSidebarNavigation();
+    renderCurrentView();
+  });
   window.addEventListener('capstone:rbac-synced', () => {
     const user = window.capstoneStore.getCurrentUser();
+    syncSidebarNavigation();
     if (!window.RBAC.canPage(user, currentPage)) {
       setPage(getFallbackPage(user), { restoreScroll: false });
     } else {
@@ -99,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
         activePicFilter = 'SEMUA';
       }
 
+      syncSidebarNavigation();
       renderCurrentView();
     });
   }
@@ -117,6 +123,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!withIcon) return label;
     return `${combined || role === 'superadmin' ? '👑' : role === 'koordinator' ? '🧭' : '👤'} ${label}`;
+  }
+
+  function getUsersVisibleToViewer(users, viewer = window.capstoneStore.getCurrentUser()) {
+    const list = Object.values(users || {});
+    if (viewer?.role === 'member') {
+      return list.filter(user => user.role !== 'superadmin');
+    }
+    return list;
   }
 
   function renderUserSwitcherDropdown() {
@@ -287,6 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
         window.capstoneStore.setAuthenticatedUser(payload.data);
         window.RBAC.loadFromBackend();
         document.body.classList.add('is-authenticated');
+        syncSidebarNavigation();
         renderUserSwitcherDropdown();
         if (!window.RBAC.canPage(payload.data, currentPage)) {
           setPage(getFallbackPage(payload.data));
@@ -308,6 +323,82 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.removeItem('capstone_auth_v1');
       localStorage.removeItem('capstone_current_user_v3');
       window.location.reload();
+    });
+  }
+
+  function initChangePassword() {
+    const btn = document.getElementById('changePasswordBtn');
+    const backdrop = document.getElementById('changePasswordModalBackdrop');
+    const form = document.getElementById('changePasswordForm');
+    const errorBox = document.getElementById('changePasswordError');
+    const submitBtn = document.getElementById('changePasswordSubmitBtn');
+    if (!btn || !backdrop || !form) return;
+
+    const close = () => {
+      form.reset();
+      if (errorBox) errorBox.textContent = '';
+      backdrop.classList.remove('active');
+    };
+
+    btn.addEventListener('click', () => {
+      form.reset();
+      if (errorBox) errorBox.textContent = '';
+      backdrop.classList.add('active');
+      document.getElementById('currentPasswordInput')?.focus();
+    });
+    document.getElementById('changePasswordModalCloseBtn')?.addEventListener('click', close);
+    document.getElementById('changePasswordCancelBtn')?.addEventListener('click', close);
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) close();
+    });
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (errorBox) errorBox.textContent = '';
+
+      const currentPassword = document.getElementById('currentPasswordInput')?.value || '';
+      const newPassword = document.getElementById('newPasswordInput')?.value || '';
+      const confirmation = document.getElementById('confirmPasswordInput')?.value || '';
+      const showError = (message) => {
+        if (errorBox) errorBox.textContent = message;
+      };
+
+      if (newPassword.length < 3) {
+        showError('Password baru minimal 3 karakter.');
+        return;
+      }
+      if (newPassword !== confirmation) {
+        showError('Konfirmasi password baru belum sama.');
+        return;
+      }
+
+      const originalLabel = submitBtn?.textContent || 'Simpan Password';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Menyimpan...';
+      }
+
+      const result = await window.capstoneStore.changePassword(currentPassword, newPassword);
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalLabel;
+      }
+
+      if (!result?.ok) {
+        showError(result?.message || 'Password gagal diubah.');
+        return;
+      }
+
+      close();
+      renderUserSwitcherDropdown();
+      if (typeof Swal !== 'undefined') {
+        Swal.fire({
+          icon: 'success',
+          title: 'Password berhasil diubah',
+          text: 'Gunakan password baru saat login berikutnya.',
+          confirmButtonText: 'Tutup'
+        });
+      }
     });
   }
 
@@ -373,10 +464,7 @@ document.addEventListener('DOMContentLoaded', () => {
     navButtons.forEach(btn => {
       btn.addEventListener('click', () => {
         const target = btn.dataset.target;
-        if (target && !window.RBAC.canPage(window.capstoneStore.getCurrentUser(), target)) {
-          Swal.fire({ icon: 'info', title: 'Akses terbatas', text: 'Role Anda tidak memiliki akses ke menu ini.', confirmButtonColor: '#1E40AF' });
-          return;
-        }
+        if (target && !window.RBAC.canPage(window.capstoneStore.getCurrentUser(), target)) return;
         if (target) setPage(target);
         if (window.matchMedia('(max-width: 1024px)').matches) {
           document.querySelector('.sidebar')?.classList.remove('open');
@@ -398,6 +486,16 @@ document.addEventListener('DOMContentLoaded', () => {
   function getSavedPage() {
     const savedPage = localStorage.getItem(PAGE_STORAGE_KEY);
     return VALID_PAGE_IDS.includes(savedPage) ? savedPage : 'dashboard';
+  }
+
+  function syncSidebarNavigation() {
+    const user = window.capstoneStore.getCurrentUser();
+    document.querySelectorAll('.sidebar-nav .nav-item').forEach(button => {
+      const allowed = Boolean(user && window.RBAC.canPage(user, button.dataset.target));
+      button.style.display = allowed ? '' : 'none';
+      button.setAttribute('aria-hidden', String(!allowed));
+      button.tabIndex = allowed ? 0 : -1;
+    });
   }
 
   function getFallbackPage(user) {
@@ -430,8 +528,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.querySelectorAll('.nav-item').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.target === safePageId);
-      btn.style.display = window.RBAC.canPage(window.capstoneStore.getCurrentUser(), btn.dataset.target) ? '' : 'none';
     });
+    syncSidebarNavigation();
 
     const headerTitle = document.getElementById('pageTitle');
     const breadcrumbLabel = document.getElementById('breadcrumbLabel');
@@ -464,6 +562,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderCurrentView() {
+    syncSidebarNavigation();
     renderUserSwitcherDropdown();
     renderNotifications();
 
@@ -766,7 +865,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     list.innerHTML = flowDocuments.map(document => {
       const icon = document.mimeType?.includes('pdf') ? '📕' : '📄';
-      const date = document.createdAt ? new Date(document.createdAt).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+      const date = document.createdAt ? formatWibDateOnly(document.createdAt) : '-';
       const id = encodeURIComponent(document.id);
       return `<article class="flow-document-card">
         <div class="flow-document-icon" aria-hidden="true">${icon}</div>
@@ -776,7 +875,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="flow-document-meta">Diunggah oleh ${escapeHtml(document.uploadedBy || 'System')} · ${date}</div>
         </div>
         <div class="flow-document-actions">
-          <a class="btn btn-secondary" href="backend/api/index.php?resource=guides&id=${id}&view=1" target="_blank" rel="noopener">📖 Baca / Unduh</a>
+          <a class="btn btn-secondary" href="backend/guide-preview.php?id=${id}" target="_blank" rel="noopener">📖 Preview PDF</a>
           <button type="button" class="btn btn-danger delete-guide-btn" data-guide-id="${id}" data-guide-title="${escapeHtml(document.title)}">🗑 Hapus</button>
         </div>
       </article>`;
@@ -1015,7 +1114,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const workloadContainer = document.getElementById('teamWorkloadGrid');
     if (workloadContainer) {
-      workloadContainer.innerHTML = Object.values(users).map(u => {
+      const workloadUsers = getUsersVisibleToViewer(users, currentUser);
+      workloadContainer.innerHTML = workloadUsers.map(u => {
         const memTasks = tasks.filter(t => t.pic === u.name);
         const activeCount = memTasks.filter(t => t.status !== 'Selesai').length;
         const doneCount = memTasks.filter(t => t.status === 'Selesai').length;
@@ -1177,36 +1277,44 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     });
+    (window.capstoneStore.getMeetings?.() || []).forEach(m => {
+      allMeetings.push({ ...m, task: null });
+    });
 
     if (meetingCountBadge) {
       meetingCountBadge.textContent = `${allMeetings.length} pertemuan`;
     }
 
     if (allMeetings.length === 0) {
-      meetingsContainer.innerHTML = `<div class="card-box-subtitle" style="padding: 1.5rem 0; text-align: center; grid-column: 1 / -1;">Belum ada jadwal pertemuan atau bimbingan yang dibuat pada tugas tim.</div>`;
+      meetingsContainer.innerHTML = `<div class="card-box-subtitle" style="padding: 1.5rem 0; text-align: center; grid-column: 1 / -1;">Belum ada jadwal pertemuan atau bimbingan.</div>`;
       return;
     }
 
-    allMeetings.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+    allMeetings.sort((a, b) => (parseWibDate(a.date)?.getTime() || 0) - (parseWibDate(b.date)?.getTime() || 0));
 
     meetingsContainer.innerHTML = allMeetings.map(m => {
-      const u = users[m.task.pic] || { color: '#64748B', initial: m.task.pic ? m.task.pic.slice(0, 2) : '??' };
+      const taskId = m.task?.id || '';
+      const responsibleName = m.task?.pic || m.host || 'System';
+      const phaseLabel = m.phase ? m.phase.replace('tugas', 'Tugas ') : '';
+      const timing = getMeetingTiming(m);
+      const u = users[responsibleName] || { color: '#64748B', initial: responsibleName.slice(0, 2).toUpperCase() };
       const dateFormatted = formatMeetingDateRange(m.date, m.endDate);
 
       return `
         <div class="meeting-card">
           <div class="meeting-card-header">
             <div class="meeting-date-badge">🗓️ ${dateFormatted}</div>
-            <span class="priority-badge ${m.task.priority}">${m.task.priority}</span>
+            <span class="meeting-status-badge ${timing.className}">${timing.label}</span>
+            ${m.task ? `<span class="priority-badge ${m.task.priority}">${m.task.priority}</span>` : `<span class="priority-badge Sedang">${phaseLabel || 'Umum'}</span>`}
           </div>
           <div class="meeting-card-title">${escapeHtml(m.title)}</div>
           ${m.notes ? `<div style="font-size: 0.775rem; color: var(--text-muted);">${escapeHtml(m.notes)}</div>` : ''}
-          <button class="meeting-task-link" data-task-id="${m.task.id}">
-            📌 <strong>Tugas:</strong> ${escapeHtml(m.task.title)}
-          </button>
+          ${m.task
+            ? `<button class="meeting-task-link" data-task-id="${taskId}">📌 <strong>Tugas:</strong> ${escapeHtml(m.task.title)}</button>`
+            : `<div style="font-size: 0.775rem; color: var(--text-muted);">📌 ${phaseLabel ? `Agenda ${phaseLabel}, belum terkait task tertentu` : 'Pertemuan umum, tidak terkait tahap tertentu'}</div>`}
           <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 0.25rem;">
             <span style="display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-secondary); font-size: 0.75rem; font-weight: 500;">
-              <span class="pic-mini-avatar" style="background: ${u.color}">${u.initial}</span> ${m.task.pic}
+              <span class="pic-mini-avatar" style="background: ${u.color}">${u.initial}</span> ${escapeHtml(responsibleName)}
             </span>
             ${m.url ? `
               <a href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer" class="meeting-url-btn">
@@ -1214,13 +1322,13 @@ document.addEventListener('DOMContentLoaded', () => {
               </a>
             ` : '<span style="font-size: 0.725rem; color: var(--text-muted); italic;">(Tidak ada URL)</span>'}
           </div>
-          <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${m.task.id}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+          ${m.task ? `<button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
             📄 Generate Berita Acara
-          </button>
-          <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${m.task.id}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
+          </button>` : ''}
+          <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
             Edit Pertemuan
           </button>
-          <button type="button" class="btn btn-secondary delete-meeting-btn" data-meeting-id="${m.id}" data-task-id="${m.task.id}" ${m.hasBeritaAcara ? 'disabled title="Pertemuan yang sudah memiliki berita acara tidak boleh dihapus."' : 'title="Hapus pertemuan (soft delete)"'} style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; color: ${m.hasBeritaAcara ? 'var(--text-muted)' : '#B91C1C'};">
+          <button type="button" class="btn btn-secondary delete-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" ${m.hasBeritaAcara ? 'disabled title="Pertemuan yang sudah memiliki berita acara tidak boleh dihapus."' : 'title="Hapus pertemuan (soft delete)"'} style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; color: ${m.hasBeritaAcara ? 'var(--text-muted)' : '#B91C1C'};">
             Hapus Pertemuan${m.hasBeritaAcara ? ' (Ada Berita Acara)' : ''}
           </button>
         </div>
@@ -1261,17 +1369,75 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const WIB_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
+
+  function parseWibDate(value) {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number') {
+      const numericDate = new Date(value);
+      return isNaN(numericDate.getTime()) ? null : numericDate;
+    }
+
+    const raw = String(value);
+    const localDateTime = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)$/);
+    const normalized = localDateTime ? `${localDateTime[1]}+07:00` : raw;
+    const parsed = new Date(normalized);
+    return isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  function getWibDateParts(value) {
+    const date = parseWibDate(value);
+    if (!date) return null;
+
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23'
+    }).formatToParts(date).reduce((result, part) => {
+      if (part.type !== 'literal') result[part.type] = part.value;
+      return result;
+    }, {});
+
+    return {
+      year: parts.year,
+      month: parts.month,
+      monthName: WIB_MONTHS[Number(parts.month) - 1],
+      day: parts.day,
+      hours: parts.hour,
+      minutes: parts.minute,
+      seconds: parts.second
+    };
+  }
+
+  function formatWibDateTime(value, includeSeconds = false) {
+    const parts = getWibDateParts(value);
+    if (!parts) return '-';
+    const seconds = includeSeconds ? `:${parts.seconds}` : '';
+    return `${parts.day} ${parts.monthName} ${parts.year}, ${parts.hours}:${parts.minutes}${seconds} WIB`;
+  }
+
+  function formatWibDateOnly(value) {
+    const parts = getWibDateParts(value);
+    return parts ? `${parts.day} ${parts.monthName} ${parts.year}` : '-';
+  }
+
+  function formatWibClock(value, includeSeconds = false) {
+    const parts = getWibDateParts(value);
+    if (!parts) return '-';
+    const seconds = includeSeconds ? `:${parts.seconds}` : '';
+    return `${parts.hours}:${parts.minutes}${seconds} WIB`;
+  }
+
   function formatMeetingDate(dateStr) {
     if (!dateStr) return 'Jadwal belum ditentukan';
     try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      const day = String(d.getDate()).padStart(2, '0');
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
-      const month = monthNames[d.getMonth()];
-      const hours = String(d.getHours()).padStart(2, '0');
-      const mins = String(d.getMinutes()).padStart(2, '0');
-      return `${day} ${month} ${d.getFullYear()}, ${hours}:${mins} WIB`;
+      const parts = getWibDateParts(dateStr);
+      return parts ? formatWibDateTime(dateStr) : dateStr;
     } catch (e) {
       return dateStr;
     }
@@ -1280,22 +1446,18 @@ document.addEventListener('DOMContentLoaded', () => {
   function formatMeetingDateRange(startStr, endStr) {
     if (!startStr) return 'Jadwal belum ditentukan';
     try {
-      const start = new Date(startStr);
-      const end = endStr ? new Date(endStr) : null;
-      if (isNaN(start.getTime())) return startStr;
-      if (!end || isNaN(end.getTime())) return formatMeetingDate(startStr);
-
-      const day = String(start.getDate()).padStart(2, '0');
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
-      const month = monthNames[start.getMonth()];
-      const startHours = String(start.getHours()).padStart(2, '0');
-      const startMins = String(start.getMinutes()).padStart(2, '0');
-      const endHours = String(end.getHours()).padStart(2, '0');
-      const endMins = String(end.getMinutes()).padStart(2, '0');
-      const sameDate = start.toDateString() === end.toDateString();
+      const start = parseWibDate(startStr);
+      const end = endStr ? parseWibDate(endStr) : null;
+      const startParts = getWibDateParts(startStr);
+      const endParts = endStr ? getWibDateParts(endStr) : null;
+      if (!start || !startParts) return startStr;
+      if (!end || !endParts) return formatMeetingDate(startStr);
+      const sameDate = startParts.day === endParts.day
+        && startParts.month === endParts.month
+        && startParts.year === endParts.year;
 
       if (sameDate) {
-        return `${day} ${month} ${start.getFullYear()}, ${startHours}:${startMins}-${endHours}:${endMins} WIB`;
+        return `${startParts.day} ${startParts.monthName} ${startParts.year}, ${startParts.hours}:${startParts.minutes}-${endParts.hours}:${endParts.minutes} WIB`;
       }
 
       return `${formatMeetingDate(startStr)} - ${formatMeetingDate(endStr)}`;
@@ -1304,18 +1466,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function getMeetingTiming(meeting) {
+    const start = parseWibDate(meeting?.date);
+    const end = parseWibDate(meeting?.endDate) || start;
+    const now = Date.now();
+
+    if (!start || !end) return { label: 'Waktu belum lengkap', className: 'is-unknown' };
+    if (now > end.getTime()) return { label: 'Sudah Lewat', className: 'is-past' };
+    if (now >= start.getTime()) return { label: 'Sedang Berlangsung', className: 'is-live' };
+    return { label: 'Akan Datang', className: 'is-upcoming' };
+  }
+
   function formatMeetingTimeRangeForBa(startStr, endStr) {
     const fallback = '21.00 WIB - 22.00 WIB';
     if (!startStr) return fallback;
     try {
-      const start = new Date(startStr);
-      const end = endStr ? new Date(endStr) : null;
-      if (isNaN(start.getTime()) || !end || isNaN(end.getTime())) return fallback;
-      const startHours = String(start.getHours()).padStart(2, '0');
-      const startMins = String(start.getMinutes()).padStart(2, '0');
-      const endHours = String(end.getHours()).padStart(2, '0');
-      const endMins = String(end.getMinutes()).padStart(2, '0');
-      return `${startHours}.${startMins} WIB - ${endHours}.${endMins} WIB`;
+      const startParts = getWibDateParts(startStr);
+      const endParts = endStr ? getWibDateParts(endStr) : null;
+      if (!startParts || !endParts) return fallback;
+      return `${startParts.hours}.${startParts.minutes} WIB - ${endParts.hours}.${endParts.minutes} WIB`;
     } catch (e) {
       return fallback;
     }
@@ -1355,7 +1524,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     });
-    phaseMeetings.sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+    (window.capstoneStore.getMeetings?.() || [])
+      .filter(m => m.phase === phaseKey)
+      .forEach(m => phaseMeetings.push({ ...m, task: null }));
+    phaseMeetings.sort((a, b) => (parseWibDate(a.date)?.getTime() || 0) - (parseWibDate(b.date)?.getTime() || 0));
 
     pageView.innerHTML = `
       <div class="phase-banner">
@@ -1380,7 +1552,7 @@ document.addEventListener('DOMContentLoaded', () => {
           
           <select id="taskPicSelect-${phaseKey}" class="select-filter">
             <option value="SEMUA" ${activePicFilter === 'SEMUA' ? 'selected' : ''}>Semua PIC (${allPhaseTasks.length} tugas)</option>
-            ${Object.values(users).map(u => {
+            ${getUsersVisibleToViewer(users, currentUser).map(u => {
               const count = allPhaseTasks.filter(t => t.pic === u.name).length;
               return `<option value="${u.name}" ${activePicFilter === u.name ? 'selected' : ''}>${u.name} (${count} tugas)</option>`;
             }).join('')}
@@ -1438,22 +1610,26 @@ document.addEventListener('DOMContentLoaded', () => {
         ` : `
           <div class="meetings-grid">
             ${phaseMeetings.map(m => {
-              const u = users[m.task.pic] || { color: '#64748B', initial: m.task.pic ? m.task.pic.slice(0, 2) : '??' };
+              const taskId = m.task?.id || '';
+              const responsibleName = m.task?.pic || m.host || 'System';
+              const u = users[responsibleName] || { color: '#64748B', initial: responsibleName.slice(0, 2).toUpperCase() };
               const dateFormatted = formatMeetingDateRange(m.date, m.endDate);
+              const timing = getMeetingTiming(m);
               return `
                 <div class="meeting-card">
                   <div class="meeting-card-header">
                     <div class="meeting-date-badge">🗓️ ${dateFormatted}</div>
-                    <span class="priority-badge ${m.task.priority}">${m.task.priority}</span>
+                    <span class="meeting-status-badge ${timing.className}">${timing.label}</span>
+                    ${m.task ? `<span class="priority-badge ${m.task.priority}">${m.task.priority}</span>` : '<span class="priority-badge Sedang">Tahap</span>'}
                   </div>
                   <div class="meeting-card-title">${escapeHtml(m.title)}</div>
                   ${m.notes ? `<div style="font-size: 0.775rem; color: var(--text-muted);">${escapeHtml(m.notes)}</div>` : ''}
-                  <button class="meeting-task-link" data-task-id="${m.task.id}">
-                    📌 <strong>Tugas:</strong> ${escapeHtml(m.task.title)}
-                  </button>
+                  ${m.task
+                    ? `<button class="meeting-task-link" data-task-id="${taskId}">📌 <strong>Tugas:</strong> ${escapeHtml(m.task.title)}</button>`
+                    : '<div style="font-size: 0.775rem; color: var(--text-muted);">📌 Agenda tahap ini, belum terkait task tertentu</div>'}
                   <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 0.25rem;">
                     <span style="display: inline-flex; align-items: center; gap: 0.35rem; color: var(--text-secondary); font-size: 0.75rem; font-weight: 500;">
-                      <span class="pic-mini-avatar" style="background: ${u.color}">${u.initial}</span> ${m.task.pic}
+                      <span class="pic-mini-avatar" style="background: ${u.color}">${u.initial}</span> ${escapeHtml(responsibleName)}
                     </span>
                     ${m.url ? `
                       <a href="${escapeHtml(m.url)}" target="_blank" rel="noopener noreferrer" class="meeting-url-btn">
@@ -1461,13 +1637,13 @@ document.addEventListener('DOMContentLoaded', () => {
                       </a>
                     ` : '<span style="font-size: 0.725rem; color: var(--text-muted); italic;">(Tidak ada URL)</span>'}
                   </div>
-                  <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${m.task.id}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+                  ${m.task ? `<button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
                     📄 Generate Berita Acara
-                  </button>
-                  <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${m.task.id}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
+                  </button>` : ''}
+                  <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
                     Edit Pertemuan
                   </button>
-                  <button type="button" class="btn btn-secondary delete-meeting-btn" data-meeting-id="${m.id}" data-task-id="${m.task.id}" ${m.hasBeritaAcara ? 'disabled title="Pertemuan yang sudah memiliki berita acara tidak boleh dihapus."' : 'title="Hapus pertemuan (soft delete)"'} style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; color: ${m.hasBeritaAcara ? 'var(--text-muted)' : '#B91C1C'};">
+                  <button type="button" class="btn btn-secondary delete-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" ${m.hasBeritaAcara ? 'disabled title="Pertemuan yang sudah memiliki berita acara tidak boleh dihapus."' : 'title="Hapus pertemuan (soft delete)"'} style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; color: ${m.hasBeritaAcara ? 'var(--text-muted)' : '#B91C1C'};">
                     Hapus Pertemuan${m.hasBeritaAcara ? ' (Ada Berita Acara)' : ''}
                   </button>
                 </div>
@@ -1611,14 +1787,18 @@ document.addEventListener('DOMContentLoaded', () => {
               <th>Pengguna</th>
               <th>Peran (Role)</th>
               <th>Tugas Ditugaskan</th>
-              <th>Terakhir Masuk (Last Login)</th>
+              <th>Terakhir Dilihat</th>
+              <th>Perangkat Login</th>
+              <th>Password Diubah</th>
               <th style="text-align: right;">Aksi CRUD</th>
             </tr>
           </thead>
           <tbody>
             ${Object.values(users).map(u => {
               const assignedTasks = tasks.filter(t => t.pic === u.name).length;
-              const formattedLastLogin = formatLastLogin(u.lastLogin);
+              const formattedLastSeen = formatLastSeen(u.lastSeen || u.lastLogin);
+              const formattedLoginDevice = formatLoginDevice(u.lastLoginDevice);
+              const formattedPasswordChanged = formatPasswordChanged(u.passwordChangedAt);
               const isCurrentlyActive = currentUser.name === u.name;
               const roleLabel = getRoleLabel(u, true);
               const roleClass = u.role === 'superadmin' ? 'Tinggi' : u.role === 'koordinator' ? 'Sedang' : 'Rendah';
@@ -1643,7 +1823,17 @@ document.addEventListener('DOMContentLoaded', () => {
                   </td>
                   <td>
                     <div style="font-size: 0.825rem; color: var(--text-main);">
-                      ${formattedLastLogin}
+                      ${formattedLastSeen}
+                    </div>
+                  </td>
+                  <td>
+                    <div class="user-device-cell" title="${escapeHtml(u.lastLoginDevice || 'Belum ada data perangkat')}">
+                      ${formattedLoginDevice}
+                    </div>
+                  </td>
+                  <td>
+                    <div style="font-size: 0.825rem; color: var(--text-main);">
+                      ${formattedPasswordChanged}
                     </div>
                   </td>
                   <td style="text-align: right;">
@@ -1707,14 +1897,36 @@ document.addEventListener('DOMContentLoaded', () => {
     if (diffMins < 60) return `${diffMins} menit yang lalu`;
     if (diffHours < 24) return `${diffHours} jam yang lalu`;
 
-    const d = new Date(timestamp);
-    const day = String(d.getDate()).padStart(2, '0');
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
-    const month = monthNames[d.getMonth()];
-    const hours = String(d.getHours()).padStart(2, '0');
-    const mins = String(d.getMinutes()).padStart(2, '0');
+    return formatAbsoluteDateTime(timestamp);
+  }
 
-    return `${day} ${month} ${d.getFullYear()}, ${hours}:${mins} WIB`;
+  function formatLastSeen(timestamp) {
+    return timestamp ? formatLastLogin(timestamp) : 'Belum terlihat';
+  }
+
+  function formatPasswordChanged(timestamp) {
+    return timestamp ? formatAbsoluteDateTime(timestamp) : 'Belum pernah diubah';
+  }
+
+  function formatAbsoluteDateTime(timestamp) {
+    return formatWibDateTime(timestamp);
+  }
+
+  function formatLoginDevice(userAgent) {
+    if (!userAgent) return 'Belum ada data';
+    const browser = /Edg\//i.test(userAgent) ? 'Edge'
+      : /Chrome\//i.test(userAgent) ? 'Chrome'
+        : /Firefox\//i.test(userAgent) ? 'Firefox'
+          : /Safari\//i.test(userAgent) ? 'Safari'
+            : /OPR\//i.test(userAgent) ? 'Opera'
+              : 'Browser';
+    const os = /Android/i.test(userAgent) ? 'Android'
+      : /iPhone|iPad|iPod/i.test(userAgent) ? 'iOS'
+        : /Windows/i.test(userAgent) ? 'Windows'
+          : /Mac OS X|Macintosh/i.test(userAgent) ? 'macOS'
+            : /Linux/i.test(userAgent) ? 'Linux'
+              : 'Perangkat';
+    return `${os} · ${browser}`;
   }
 
   /* ==========================================
@@ -1956,15 +2168,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const rowsHtml = paginatedLogs.map(l => {
       const u = users[l.user] || { color: '#64748B', initial: l.user ? l.user.slice(0, 2).toUpperCase() : 'SYS' };
-      const d = new Date(l.timestamp);
-      const day = String(d.getDate()).padStart(2, '0');
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
-      const month = monthNames[d.getMonth()];
-      const hours = String(d.getHours()).padStart(2, '0');
-      const mins = String(d.getMinutes()).padStart(2, '0');
-      const secs = String(d.getSeconds()).padStart(2, '0');
-      const dateStr = `${day} ${month} ${d.getFullYear()}`;
-      const timeStr = `${hours}:${mins}:${secs} WIB`;
+      const wibParts = getWibDateParts(l.timestamp);
+      const dateStr = wibParts ? `${wibParts.day} ${wibParts.monthName} ${wibParts.year}` : '-';
+      const timeStr = wibParts ? `${wibParts.hours}:${wibParts.minutes}:${wibParts.seconds} WIB` : '-';
 
       const actionIcons = {
         'Tambah Tugas': '📝',
@@ -2194,8 +2400,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const csvRows = [headers.join(',')];
 
     logsToExport.forEach(l => {
-      const d = new Date(l.timestamp);
-      const dateStr = `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')} WIB`;
+      const dateStr = formatWibDateTime(l.timestamp, true);
       const row = [
         `"${(l.id || '').replace(/"/g, '""')}"`,
         `"${dateStr}"`,
@@ -2269,14 +2474,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const rowsHtml = logsToPrint.map((l, idx) => {
-      const d = new Date(l.timestamp);
-      const day = String(d.getDate()).padStart(2, '0');
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
-      const month = monthNames[d.getMonth()];
-      const hours = String(d.getHours()).padStart(2, '0');
-      const mins = String(d.getMinutes()).padStart(2, '0');
-      const secs = String(d.getSeconds()).padStart(2, '0');
-      const timeStr = `${day} ${month} ${d.getFullYear()}, ${hours}:${mins}:${secs} WIB`;
+      const timeStr = formatWibDateTime(l.timestamp, true);
       const roleLabel = getRoleLabel({ role: l.role });
       const objName = l.object?.name
         ? `${l.object.name} (${l.object.type || '-'})`
@@ -2306,7 +2504,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="text-align: center; margin-bottom: 1rem; border-bottom: 2px solid #1E3A8A; padding-bottom: 0.6rem;">
           <h2 style="margin: 0; color: #1E3A8A; font-size: 16pt; font-weight: 800; font-family: sans-serif;">UNIVERSITAS TERBUKA</h2>
           <h3 style="margin: 4px 0 0 0; font-size: 11pt; color: #334155; font-family: sans-serif;">LAPORAN REKAM JEJAK AUDIT SISTEM (CAPSTONE PROJECT WORKSPACE)</h3>
-          <p style="margin: 4px 0 0 0; font-size: 8.5pt; color: #64748B; font-family: sans-serif;">Dicetak: ${new Date().toLocaleString('id-ID')} WIB | Total Data Filtered: ${logsToPrint.length} Aktivitas</p>
+          <p style="margin: 4px 0 0 0; font-size: 8.5pt; color: #64748B; font-family: sans-serif;">Dicetak: ${formatWibDateTime(Date.now(), true)} | Total Data Filtered: ${logsToPrint.length} Aktivitas</p>
         </div>
       </div>
 
@@ -2334,13 +2532,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatTimestamp(timestamp) {
     if (!timestamp) return '-';
-    const d = new Date(timestamp);
-    const day = String(d.getDate()).padStart(2, '0');
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
-    const month = monthNames[d.getMonth()];
-    const hours = String(d.getHours()).padStart(2, '0');
-    const mins = String(d.getMinutes()).padStart(2, '0');
-    return `${day} ${month} ${d.getFullYear()}, ${hours}:${mins} WIB`;
+    return formatWibDateTime(timestamp);
   }
 
   /* ==========================================
@@ -2477,8 +2669,9 @@ document.addEventListener('DOMContentLoaded', () => {
             <h3 id="meetingModalTitle">🗓️ Buat Agenda Pertemuan / Bimbingan</h3>
             <button id="meetingModalCloseBtn" class="modal-close-btn">&times;</button>
           </div>
-          <form id="meetingForm">
+          <form id="meetingForm" novalidate>
             <input type="hidden" id="meetingIdInput" />
+            <input type="hidden" id="meetingPhaseInput" />
             <div class="modal-body">
               <div class="form-group">
                 <label class="form-label">Topik / Agenda Pertemuan</label>
@@ -2553,12 +2746,23 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     const taskId = document.getElementById('meetingTaskSelect').value;
+    const phaseKey = document.getElementById('meetingPhaseInput').value || '';
     const title = document.getElementById('meetingTitleInput').value.trim();
     const date = document.getElementById('meetingDateInput').value;
     const endDate = document.getElementById('meetingEndDateInput').value;
     const host = document.getElementById('meetingHostSelect').value;
     const url = document.getElementById('meetingUrlInput').value.trim();
     const notes = document.getElementById('meetingNotesInput').value.trim();
+
+    if (!title || !date || !endDate || !host) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Data belum lengkap',
+        text: 'Isi topik, waktu mulai, waktu selesai, dan host pertemuan terlebih dahulu.',
+        confirmButtonColor: '#1E40AF'
+      });
+      return;
+    }
 
     if (date && endDate && new Date(endDate) < new Date(date)) {
       Swal.fire({
@@ -2570,41 +2774,42 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (taskId) {
-      const task = window.capstoneStore.getById(taskId);
-      const existingMeeting = meetingId ? findMeetingContext(meetingId)?.meeting : null;
-      const meetingData = {
-        id: meetingId || 'm-' + Date.now(),
-        title: title || 'Agenda Pertemuan Baru',
-        date,
-        endDate,
-        host,
-        url,
-        notes,
-        hasBeritaAcara: Boolean(existingMeeting?.hasBeritaAcara)
-      };
+    const isGeneralMeeting = !taskId || taskId === '__GENERAL__';
+    const isPhaseMeeting = taskId === '__PHASE__';
+    const selectedTask = !isGeneralMeeting && !isPhaseMeeting ? window.capstoneStore.getById(taskId) : null;
+    const meetingData = {
+      id: meetingId || 'm-' + Date.now(),
+      taskId: isGeneralMeeting || isPhaseMeeting ? null : taskId,
+      phase: isGeneralMeeting ? null : (phaseKey || selectedTask?.phase || null),
+      title: title || 'Agenda Pertemuan Baru',
+      date,
+      endDate,
+      host,
+      url,
+      notes
+    };
 
-      if (task && meetingId) {
-        const source = findMeetingContext(meetingId);
-        if (source && source.task.id !== taskId) {
-          const oldMeetings = (source.task.meetings || []).filter(m => m.id !== meetingId);
-          window.capstoneStore.update(source.task.id, { meetings: oldMeetings });
-
-          const newMeetings = [...(task.meetings || []), meetingData];
-          window.capstoneStore.update(taskId, { meetings: newMeetings });
-        } else {
-          const meetings = (task.meetings || []).map(m => m.id === meetingId ? meetingData : m);
-          window.capstoneStore.update(taskId, { meetings });
-        }
-      } else if (task) {
-        const meetings = task.meetings || [];
-        meetings.push(meetingData);
-        window.capstoneStore.update(taskId, { meetings });
-      }
+    const result = meetingId
+      ? window.capstoneStore.updateMeeting(meetingId, meetingData)
+      : window.capstoneStore.createMeeting(meetingData);
+    if (!result?.ok) {
+      Swal.fire({ icon: 'error', title: 'Gagal menyimpan pertemuan', text: result?.message || 'Data pertemuan belum dapat disimpan.', confirmButtonColor: '#1E40AF' });
+      return;
     }
 
     closeMeetingModal();
-    renderCurrentView();
+    if (isGeneralMeeting) {
+      setPage('dashboard', { restoreScroll: false });
+    } else {
+      renderCurrentView();
+    }
+    Swal.fire({
+      icon: 'success',
+      title: meetingId ? 'Pertemuan diperbarui' : 'Pertemuan tersimpan',
+      text: isGeneralMeeting ? 'Meeting umum sudah tersimpan dan tampil di dashboard.' : 'Agenda pertemuan berhasil disimpan.',
+      timer: 1800,
+      showConfirmButton: false
+    });
   }
 
   function openNewMeetingModal(phaseKey = '') {
@@ -2617,6 +2822,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     form.reset();
     document.getElementById('meetingIdInput').value = '';
+    document.getElementById('meetingPhaseInput').value = phaseKey;
     document.getElementById('meetingEndDateInput').value = '';
     const titleEl = document.getElementById('meetingModalTitle');
     if (titleEl) titleEl.textContent = '🗓️ Buat Agenda Pertemuan / Bimbingan';
@@ -2624,16 +2830,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const taskSelect = document.getElementById('meetingTaskSelect');
     const tasks = phaseKey ? window.capstoneStore.getByPhase(phaseKey) : window.capstoneStore.getAll();
     if (taskSelect) {
-      taskSelect.innerHTML = `<option value="">-- Pilih Tugas Terkait --</option>` + tasks.map(t => `
+      const contextOption = phaseKey
+        ? `<option value="__PHASE__">Pertemuan ${phaseKey.replace('tugas', 'Tugas ')} (tanpa task spesifik)</option>`
+        : `<option value="__GENERAL__">Pertemuan Umum (tanpa tahap)</option>`;
+      taskSelect.innerHTML = contextOption + tasks.map(t => `
         <option value="${t.id}">${escapeHtml(t.title)}</option>
       `).join('');
-      if (tasks.length > 0) taskSelect.value = tasks[0].id;
+      taskSelect.value = phaseKey ? '__PHASE__' : '__GENERAL__';
     }
 
     const hostSelect = document.getElementById('meetingHostSelect');
     const users = window.capstoneStore.getUsers();
+    const visibleUsers = getUsersVisibleToViewer(users, currentUser);
     if (hostSelect) {
-      hostSelect.innerHTML = Object.values(users).map(u => `
+      hostSelect.innerHTML = visibleUsers.map(u => `
         <option value="${u.name}" ${u.name === currentUser.name ? 'selected' : ''}>${u.name}</option>
       `).join('');
     }
@@ -2659,7 +2869,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     form.reset();
-    populateMeetingTaskOptions(taskId || context.task.id);
+    const editPhase = context.meeting.phase || context.task?.phase || '';
+    document.getElementById('meetingPhaseInput').value = editPhase;
+    populateMeetingTaskOptions(taskId || context.task?.id || (editPhase ? '__PHASE__' : '__GENERAL__'), editPhase);
     populateMeetingHostOptions(context.meeting.host || currentUser.name);
 
     document.getElementById('meetingIdInput').value = context.meeting.id;
@@ -2702,7 +2914,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     if (!result.isConfirmed) return;
 
-    const deleted = window.capstoneStore.deleteMeeting(context.task.id, context.meeting.id);
+    const deleted = window.capstoneStore.deleteMeeting(context.task?.id || null, context.meeting.id);
     if (!deleted.ok) {
       Swal.fire({ icon: 'error', title: 'Gagal menghapus', text: deleted.message, confirmButtonColor: '#1E40AF' });
       return;
@@ -2717,6 +2929,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const meeting = (task.meetings || []).find(m => m.id === meetingId);
       if (meeting) return { task, meeting };
     }
+    const meeting = window.capstoneStore.getMeetings?.().find(m => m.id === meetingId);
+    if (meeting) return { task: null, meeting };
     return null;
   }
 
@@ -2725,11 +2939,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!taskSelect) return;
 
     const tasks = phaseKey ? window.capstoneStore.getByPhase(phaseKey) : window.capstoneStore.getAll();
-    taskSelect.innerHTML = `<option value="">-- Pilih Tugas Terkait --</option>` + tasks.map(t => `
+    const contextOption = phaseKey
+      ? `<option value="__PHASE__">Pertemuan ${phaseKey.replace('tugas', 'Tugas ')} (tanpa task spesifik)</option>`
+      : `<option value="__GENERAL__">Pertemuan Umum (tanpa tahap)</option>`;
+    taskSelect.innerHTML = contextOption + tasks.map(t => `
       <option value="${t.id}" ${t.id === selectedTaskId ? 'selected' : ''}>${escapeHtml(t.title)}</option>
     `).join('');
 
-    if (!selectedTaskId && tasks.length > 0) taskSelect.value = tasks[0].id;
+    if (selectedTaskId === '__PHASE__' || selectedTaskId === '__GENERAL__' || !selectedTaskId) {
+      taskSelect.value = selectedTaskId === '__PHASE__' && phaseKey ? '__PHASE__' : '__GENERAL__';
+    }
   }
 
   function populateMeetingHostOptions(selectedHost = '') {
@@ -2737,7 +2956,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!hostSelect) return;
 
     const users = window.capstoneStore.getUsers();
-    hostSelect.innerHTML = Object.values(users).map(u => `
+    const visibleUsers = getUsersVisibleToViewer(users, window.capstoneStore.getCurrentUser());
+    hostSelect.innerHTML = visibleUsers.map(u => `
       <option value="${u.name}" ${u.name === selectedHost ? 'selected' : ''}>${u.name}</option>
     `).join('');
   }
@@ -3038,7 +3258,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!picSelect) return;
 
     const users = window.capstoneStore.getUsers();
-    picSelect.innerHTML = Object.values(users).map(u => `
+    const visibleUsers = getUsersVisibleToViewer(users, window.capstoneStore.getCurrentUser());
+    picSelect.innerHTML = visibleUsers.map(u => `
       <option value="${u.name}" ${u.name === selectedPic ? 'selected' : ''}>${u.name}</option>
     `).join('');
   }
@@ -3162,8 +3383,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const hostSelect = document.getElementById('meetingHostSelect');
     const users = window.capstoneStore.getUsers();
+    const visibleUsers = getUsersVisibleToViewer(users, currentUser);
     if (hostSelect) {
-      hostSelect.innerHTML = Object.values(users).map(u => `
+      hostSelect.innerHTML = visibleUsers.map(u => `
         <option value="${u.name}" ${u.name === currentUser.name ? 'selected' : ''}>${u.name}</option>
       `).join('');
     }
@@ -3227,10 +3449,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Hari dan Tanggal
     let formattedDate = "Jumat, 25 September 2026";
     if (meeting && meeting.date) {
-      const d = new Date(meeting.date);
-      const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+      const d = parseWibDate(meeting.date);
+      const wibParts = getWibDateParts(meeting.date);
       const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-      formattedDate = `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+      const weekday = d ? new Intl.DateTimeFormat('id-ID', { weekday: 'long', timeZone: 'Asia/Jakarta' }).format(d) : '';
+      formattedDate = wibParts ? `${weekday}, ${Number(wibParts.day)} ${months[Number(wibParts.month) - 1]} ${wibParts.year}` : formattedDate;
     }
     document.getElementById('baHariTanggalInput').value = formattedDate;
 

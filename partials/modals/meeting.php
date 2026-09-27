@@ -5,8 +5,9 @@
       <h3 id="meetingModalTitle">Buat Agenda Pertemuan / Bimbingan</h3>
       <button id="meetingModalCloseBtn" class="modal-close-btn">&times;</button>
     </div>
-    <form id="meetingForm">
+    <form id="meetingForm" novalidate>
       <input type="hidden" id="meetingIdInput" />
+      <input type="hidden" id="meetingPhaseInput" />
       <div class="modal-body">
         <div class="form-group">
           <label class="form-label">Topik / Agenda Pertemuan</label>
@@ -14,9 +15,9 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Tugas Terkait (Tugas Capstone)</label>
+          <label class="form-label">Tugas Terkait (Opsional)</label>
           <select id="meetingTaskSelect" class="form-select">
-            <option value="">-- Pilih Tugas Terkait --</option>
+            <option value="__GENERAL__">Pertemuan Umum (tanpa tugas)</option>
           </select>
         </div>
 

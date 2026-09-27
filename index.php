@@ -1,10 +1,15 @@
+<?php
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ruang Kerja Capstone — Universitas Terbuka</title>
-  <link rel="stylesheet" href="css/style.css?v=20260927-12" />
+  <link rel="stylesheet" href="css/style.css?v=20260927-15" />
   <script>
     // Tentukan state autentikasi sebelum paint pertama agar login tidak berkedip saat refresh.
     try {
@@ -42,14 +47,15 @@
 <?php require __DIR__ . '/partials/modals/meeting.php'; ?>
 <?php require __DIR__ . '/partials/modals/snapshot.php'; ?>
 <?php require __DIR__ . '/partials/modals/berita-acara.php'; ?>
+<?php require __DIR__ . '/partials/modals/change-password.php'; ?>
 
 <script>
   window.CAPSTONE_API_BASE = 'backend/api/index.php';
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="js/rbac.js?v=20260927-8"></script>
-  <script src="js/data.js?v=20260927-14"></script>
-  <script src="js/app.js?v=20260927-33"></script>
+  <script src="js/rbac.js?v=20260927-9"></script>
+  <script src="js/data.js?v=20260927-19"></script>
+  <script src="js/app.js?v=20260927-46"></script>
 </body>
 </html>
