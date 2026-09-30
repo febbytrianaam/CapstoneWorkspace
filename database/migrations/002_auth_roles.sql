@@ -7,7 +7,7 @@ ALTER TABLE users
 
 UPDATE users
 SET username = LOWER(id),
-    password_hash = '$2y$12$q.D4JlD/QFd.t6xIU4xSEOdXtERvWJ2MuVh6TTKIAEOzDAcRubRAK'
+    password_hash = '$2y$12$Y.uB3w5IILInXzJ4fFy5POwTA9l34wUIoMENYzU8W2giY6d.SOP8G'
 WHERE username IS NULL OR password_hash IS NULL;
 
 ALTER TABLE users

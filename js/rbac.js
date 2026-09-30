@@ -2,32 +2,35 @@
 (function () {
   const MATRIX = {
     superadmin: {
-      pages: { dashboard: true, tugas1: true, tugas2: true, tugas3: true, flow: true, users: true, audit: true, rbac: true },
+      pages: { dashboard: true, tugas1: true, tugas2: true, tugas3: true, flow: true, documents: true, users: true, audit: true, rbac: true },
       widgets: { personal: true, stats: true, charts: true, attention: true, meetings: true, workload: true },
       tasks: { create: true, read: true, update: true, delete: true },
       users: { create: true, read: true, update: true, delete: true },
       meetings: { create: true, read: true, update: true, delete: true },
       guides: { create: true, read: true, delete: true },
+      documents: { create: true, read: true, delete: true },
       beritaAcara: { create: true, read: true, update: true, delete: false },
       audit: { read: true, create: true, manage: true }
     },
     koordinator: {
-      pages: { dashboard: true, tugas1: true, tugas2: true, tugas3: true, flow: true, users: false, audit: true, rbac: false },
+      pages: { dashboard: true, tugas1: true, tugas2: true, tugas3: true, flow: true, documents: true, users: false, audit: true, rbac: false },
       widgets: { personal: true, stats: true, charts: true, attention: true, meetings: true, workload: true },
       tasks: { create: true, read: true, update: true, delete: true },
       users: { create: false, read: true, update: false, delete: false },
       meetings: { create: true, read: true, update: true, delete: true },
       guides: { create: true, read: true, delete: true },
+      documents: { create: false, read: true, delete: false },
       beritaAcara: { create: true, read: true, update: true, delete: false },
       audit: { read: true, create: true, manage: false }
     },
     member: {
-      pages: { dashboard: false, tugas1: true, tugas2: true, tugas3: true, flow: true, users: false, audit: false, rbac: false },
+      pages: { dashboard: false, tugas1: true, tugas2: true, tugas3: true, flow: true, documents: true, users: false, audit: false, rbac: false },
       widgets: { personal: false, stats: false, charts: false, attention: false, meetings: false, workload: false },
       tasks: { create: false, read: true, update: true, delete: false },
       users: { create: false, read: false, update: false, delete: false },
-      meetings: { create: false, read: true, update: false, delete: false },
+      meetings: { create: false, read: false, update: false, delete: false },
       guides: { create: false, read: true, delete: false },
+      documents: { create: false, read: true, delete: false },
       beritaAcara: { create: false, read: true, update: false, delete: false },
       audit: { read: false, create: true, manage: false }
     }
@@ -65,9 +68,9 @@
 
   async function loadFromBackend() {
     try {
-      const auth = JSON.parse(localStorage.getItem('capstone_auth_v1') || 'null');
       const response = await fetch(`${API_BASE}?resource=rbac`, {
-        headers: { Accept: 'application/json', 'X-Role': auth?.role || 'member' }
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' }
       });
       if (!response.ok) return;
       const payload = await response.json();
@@ -83,13 +86,12 @@
   }
 
   function persistToBackend(role, area, permission, value) {
-    const auth = JSON.parse(localStorage.getItem('capstone_auth_v1') || 'null');
     fetch(`${API_BASE}?resource=rbac`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'X-Role': auth?.role || 'member'
+        Accept: 'application/json'
       },
       body: JSON.stringify({ role, area, permission, allowed: Boolean(value) })
     }).catch(() => {});

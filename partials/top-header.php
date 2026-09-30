@@ -11,12 +11,6 @@
       </div>
 
       <div class="header-actions">
-        <!-- Akun Aktif -->
-        <div class="user-switcher-box">
-          <span class="user-switcher-label">Akun:</span>
-          <select id="userRoleSelect" class="user-switcher-select" aria-label="Akun aktif"></select>
-        </div>
-
         <!-- Tombol Lonceng Notifikasi -->
         <div class="notification-wrapper">
           <button id="notificationBtn" class="notification-btn" title="Pemberitahuan">
@@ -34,10 +28,45 @@
           </div>
         </div>
 
-        <button id="changePasswordBtn" class="btn btn-secondary change-password-btn" type="button" title="Ganti password">
-          <span aria-hidden="true">🔑</span><span class="change-password-label">Ganti Password</span>
-        </button>
-        <button id="headerAddTaskBtn" class="btn btn-primary">+ Tambah Tugas</button>
-        <button id="logoutBtn" class="btn btn-secondary" type="button">Keluar</button>
+        <div class="profile-wrapper">
+          <button id="profileMenuBtn" class="profile-menu-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Profil akun">
+            <span id="profileAvatar" class="profile-avatar">US</span>
+            <span class="profile-menu-text">
+              <span id="profileMenuName">Profil</span>
+              <span id="profileMenuRole">Akun</span>
+            </span>
+            <span class="profile-menu-caret" aria-hidden="true">▾</span>
+          </button>
+
+          <div id="profileDropdown" class="profile-dropdown">
+            <div class="profile-dropdown-header">
+              <span id="profileDropdownAvatar" class="profile-avatar profile-avatar-lg">US</span>
+              <div>
+                <div id="profileDropdownName" class="profile-dropdown-name">Nama Pengguna</div>
+                <div id="profileDropdownRole" class="profile-dropdown-role">Jabatan</div>
+              </div>
+            </div>
+            <div class="profile-info-list">
+              <div class="profile-info-row">
+                <span>Nama</span>
+                <strong id="profileFullName">-</strong>
+              </div>
+              <div class="profile-info-row">
+                <span>NIM</span>
+                <strong id="profileNim">-</strong>
+              </div>
+              <div class="profile-info-row">
+                <span>Jabatan</span>
+                <strong id="profileRoleLabel">-</strong>
+              </div>
+            </div>
+            <div class="profile-dropdown-actions">
+              <button id="changePasswordBtn" class="btn btn-secondary change-password-btn" type="button" title="Ganti password">
+                <span aria-hidden="true">🔑</span><span class="change-password-label">Ganti Password</span>
+              </button>
+              <button id="logoutBtn" class="btn btn-secondary logout-profile-btn" type="button">Keluar</button>
+            </div>
+          </div>
+        </div>
       </div>
     </header>

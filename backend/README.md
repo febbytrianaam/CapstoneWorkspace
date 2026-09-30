@@ -7,6 +7,9 @@ Backend dibuat ringan dengan PHP PDO + MySQL agar mudah dijalankan di XAMPP/Lara
 1. Buka phpMyAdmin atau MySQL client.
 2. Jalankan file `database/schema.sql`.
 3. Sesuaikan kredensial di `backend/config.php` jika MySQL lokal tidak memakai `root` tanpa password.
+4. Buat user superadmin pertama langsung di MySQL dengan `password_hash` dari fungsi PHP `password_hash()`.
+
+Jangan simpan dump database asli di document root project. Backup yang berisi hash password, data mahasiswa, meeting link, atau audit log harus berada di lokasi privat di luar folder yang disajikan oleh PHP built-in server.
 
 Default koneksi:
 
@@ -26,7 +29,7 @@ Default koneksi:
 - `DELETE backend/api/index.php?resource=meetings&id=m-101-1` (soft delete; ditolak jika sudah ada berita acara)
 - `PUT backend/api/index.php?resource=meetings&id=m-101-1` dengan body `{"action":"mark_berita_acara"}` untuk mengunci pertemuan
 - `GET backend/api/index.php?resource=users`
-- `POST backend/api/index.php?resource=auth` dengan body `{"username":"febby","password":"123"}` untuk login
+- `POST backend/api/index.php?resource=auth` untuk login menggunakan akun yang sudah dibuat di database
 
 ## Matrix RBAC
 

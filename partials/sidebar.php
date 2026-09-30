@@ -32,6 +32,10 @@
         <span class="nav-icon">🔄</span>
         <span>Alur Kerja</span>
       </button>
+      <button class="nav-item" data-target="documents">
+        <span class="nav-icon">🗂️</span>
+        <span>Arsip Dokumen</span>
+      </button>
       <button id="navUsersBtn" class="nav-item" data-target="users">
         <span class="nav-icon">👥</span>
         <span>Manajemen Pengguna</span>

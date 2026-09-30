@@ -1,0 +1,3 @@
+-- Database dump intentionally removed from the public web root.
+-- Store real backups outside the PHP built-in server document root.
+-- Do not publish password hashes, tunnel tokens, NIM/student data, meeting links, or audit logs here.

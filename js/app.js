@@ -13,7 +13,17 @@ document.addEventListener('DOMContentLoaded', () => {
     'Selesai': 'var(--status-done)'
   };
   const PAGE_STORAGE_KEY = 'capstone_current_page_v3';
-  const VALID_PAGE_IDS = ['dashboard', 'tugas1', 'tugas2', 'tugas3', 'flow', 'users', 'audit', 'rbac'];
+  const PROGRESS_NOTE_COLLAPSE_KEY = 'capstone_progress_note_collapsed_v1';
+  const VALID_PAGE_IDS = ['dashboard', 'tugas1', 'tugas2', 'tugas3', 'flow', 'documents', 'users', 'audit', 'rbac'];
+  const DOCUMENT_ARCHIVE_CATEGORIES = {
+    berita_acara: 'Berita Acara',
+    surat_izin: 'Surat Izin',
+    surat_pernyataan: 'Surat Pernyataan',
+    proposal_laporan: 'Proposal / Laporan',
+    diagram_alur: 'Diagram / Alur / Gambar',
+    lampiran: 'Lampiran',
+    lainnya: 'Lainnya'
+  };
 
   // State Global
   let currentPage = getSavedPage();
@@ -21,6 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let activePicFilter = 'SEMUA';
 
   let activePriorityFilter = 'SEMUA';
+  let showArchivedTasks = false;
 
   let auditSearchQuery = '';
   let auditUserFilter = 'SEMUA';
@@ -32,11 +43,17 @@ document.addEventListener('DOMContentLoaded', () => {
   let auditPageSize = 10;
 
   let modalChecklistState = [];
+  let modalTaskCanUpdateProgress = false;
+  let modalTaskCanManageStructure = false;
   let baActivitiesState = [];
   let baUploadedImages = [];
   let flowDocuments = [];
   let flowDocumentsLoaded = false;
   let flowDocumentsLoading = false;
+  let documentArchives = [];
+  let documentArchivesLoaded = false;
+  let documentArchivesLoading = false;
+  let documentArchiveCategoryFilter = 'SEMUA';
 
   // Inisialisasi UI & Pengendali Komponen
   initTheme();
@@ -45,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSidebarToggle();
   initUserSwitcher();
   initNotificationSystem();
+  initProfileMenu();
   initNavigation();
   initTaskModalListeners();
   initUserModalListeners();
@@ -52,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initBeritaAcaraSystem();
   initGlobalButtons();
   initFlowDocuments();
+  initDocumentArchive();
   window.addEventListener('capstone:data-synced', () => {
     syncSidebarNavigation();
     renderCurrentView();
@@ -71,9 +90,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // Render pertama menunggu snapshot database agar tidak menampilkan seed lokal lebih dulu.
   const initialDataReady = window.capstoneStore.ready || Promise.resolve();
   initialDataReady.then(() => {
-    setPage(currentPage, { restoreScroll: false });
+    if (window.capstoneStore.getCurrentUser()) {
+      document.body.classList.add('is-authenticated');
+      setPage(currentPage, { restoreScroll: false });
+    }
     document.documentElement.classList.add('data-ready');
     document.documentElement.classList.add('app-ready');
+    document.documentElement.classList.remove('auth-pending');
   });
 
   /* ==========================================
@@ -86,23 +109,16 @@ document.addEventListener('DOMContentLoaded', () => {
     renderUserSwitcherDropdown();
 
     const currentUser = window.capstoneStore.getCurrentUser();
+    if (!currentUser) return;
     select.value = currentUser.id;
 
-    if (currentUser.role === 'member') {
-      activePicFilter = currentUser.name;
-    } else {
-      activePicFilter = 'SEMUA';
-    }
+    activePicFilter = 'SEMUA';
 
     select.addEventListener('change', (e) => {
       const selectedId = e.target.value;
       const updatedUser = window.capstoneStore.setCurrentUser(selectedId);
       
-      if (updatedUser && updatedUser.role === 'member') {
-        activePicFilter = updatedUser.name;
-      } else {
-        activePicFilter = 'SEMUA';
-      }
+      activePicFilter = 'SEMUA';
 
       syncSidebarNavigation();
       renderCurrentView();
@@ -135,7 +151,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderUserSwitcherDropdown() {
     const select = document.getElementById('userRoleSelect');
-    if (!select) return;
+    if (!select) {
+      renderProfileMenu();
+      return;
+    }
 
     const currentUser = window.capstoneStore.getCurrentUser();
     const users = window.capstoneStore.getUsers();
@@ -151,6 +170,61 @@ document.addEventListener('DOMContentLoaded', () => {
       select.value = currentUser.id;
     }
     select.disabled = true;
+    renderProfileMenu();
+  }
+
+  function renderProfileMenu() {
+    const currentUser = window.capstoneStore.getCurrentUser();
+    if (!currentUser) return;
+
+    const displayName = currentUser.fullName || currentUser.name || 'Pengguna';
+    const shortName = currentUser.name || displayName;
+    const nim = currentUser.nim || '-';
+    const roleLabel = getRoleLabel(currentUser, false);
+    const initial = (currentUser.initial || shortName.slice(0, 2) || 'US').toUpperCase();
+    const color = currentUser.color || '#2563EB';
+
+    const setText = (id, value) => {
+      const element = document.getElementById(id);
+      if (element) element.textContent = value;
+    };
+    const setAvatar = (id) => {
+      const element = document.getElementById(id);
+      if (!element) return;
+      element.textContent = initial;
+      element.style.backgroundColor = color;
+    };
+
+    setAvatar('profileAvatar');
+    setAvatar('profileDropdownAvatar');
+    setText('profileMenuName', shortName);
+    setText('profileMenuRole', roleLabel);
+    setText('profileDropdownName', displayName);
+    setText('profileDropdownRole', roleLabel);
+    setText('profileFullName', displayName);
+    setText('profileNim', nim);
+    setText('profileRoleLabel', roleLabel);
+  }
+
+  function initProfileMenu() {
+    const btn = document.getElementById('profileMenuBtn');
+    const dropdown = document.getElementById('profileDropdown');
+    if (!btn || !dropdown) return;
+
+    btn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const isActive = dropdown.classList.toggle('active');
+      btn.setAttribute('aria-expanded', String(isActive));
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!dropdown.contains(event.target) && !btn.contains(event.target)) {
+        dropdown.classList.remove('active');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    renderProfileMenu();
   }
 
   /* ==========================================
@@ -274,15 +348,25 @@ document.addEventListener('DOMContentLoaded', () => {
     const logoutBtn = document.getElementById('logoutBtn');
     if (!loginForm) return;
 
-    try {
-      const savedUser = JSON.parse(localStorage.getItem('capstone_auth_v1') || 'null');
-      if (savedUser?.id) {
-        window.capstoneStore.setAuthenticatedUser(savedUser);
-        document.body.classList.add('is-authenticated');
+    const activateAuthenticatedUi = (user) => {
+      if (!user?.id) return;
+      document.body.classList.add('is-authenticated');
+      syncSidebarNavigation();
+      renderUserSwitcherDropdown();
+      if (!window.RBAC.canPage(user, currentPage)) {
+        setPage(getFallbackPage(user), { restoreScroll: false });
+      } else {
+        renderCurrentView();
       }
-    } catch (e) {
-      localStorage.removeItem('capstone_auth_v1');
-    }
+    };
+
+    (window.capstoneStore.ready || Promise.resolve()).then(() => {
+      activateAuthenticatedUi(window.capstoneStore.getCurrentUser());
+    });
+
+    window.addEventListener('capstone:auth-required', () => {
+      document.body.classList.remove('is-authenticated');
+    });
 
     loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -299,15 +383,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (payload?.ok && payload.data) {
         window.capstoneStore.setAuthenticatedUser(payload.data);
-        window.RBAC.loadFromBackend();
-        document.body.classList.add('is-authenticated');
-        syncSidebarNavigation();
-        renderUserSwitcherDropdown();
-        if (!window.RBAC.canPage(payload.data, currentPage)) {
-          setPage(getFallbackPage(payload.data));
-        } else {
-          renderCurrentView();
-        }
+        if (submitBtn) submitBtn.textContent = 'Memuat data...';
+        await window.capstoneStore.syncFromBackend();
+        await window.RBAC.loadFromBackend();
+        activateAuthenticatedUi(window.capstoneStore.getCurrentUser() || payload.data);
         loginForm.reset();
       } else if (loginError) {
         loginError.textContent = 'Username atau password salah.';
@@ -319,9 +398,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    logoutBtn?.addEventListener('click', () => {
-      localStorage.removeItem('capstone_auth_v1');
-      localStorage.removeItem('capstone_current_user_v3');
+    logoutBtn?.addEventListener('click', async () => {
+      document.getElementById('profileDropdown')?.classList.remove('active');
+      document.getElementById('profileMenuBtn')?.setAttribute('aria-expanded', 'false');
+      await window.capstoneStore.logout();
       window.location.reload();
     });
   }
@@ -341,6 +421,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     btn.addEventListener('click', () => {
+      document.getElementById('profileDropdown')?.classList.remove('active');
+      document.getElementById('profileMenuBtn')?.setAttribute('aria-expanded', 'false');
       form.reset();
       if (errorBox) errorBox.textContent = '';
       backdrop.classList.add('active');
@@ -549,6 +631,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (safePageId === 'flow') {
       headerTitle.textContent = 'Alur Kerja Proyek';
       breadcrumbLabel.textContent = 'Standar Prosedur';
+    } else if (safePageId === 'documents') {
+      headerTitle.textContent = 'Arsip Dokumen';
+      breadcrumbLabel.textContent = 'Dokumen Final & Lampiran';
     } else if (PHASE_META[safePageId]) {
       headerTitle.textContent = PHASE_META[safePageId].label;
       breadcrumbLabel.textContent = PHASE_META[safePageId].short;
@@ -589,6 +674,8 @@ document.addEventListener('DOMContentLoaded', () => {
       renderRbacView();
     } else if (currentPage === 'flow') {
       renderFlowView();
+    } else if (currentPage === 'documents') {
+      renderDocumentArchiveView();
     } else if (currentPage.startsWith('tugas')) {
       renderPhaseView(currentPage);
     }
@@ -602,9 +689,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const canTaskCreate = window.RBAC.can(user, 'tasks', 'create');
     const canTaskUpdate = window.RBAC.can(user, 'tasks', 'update');
     const canMeetingCreate = window.RBAC.can(user, 'meetings', 'create');
+    const canMeetingRead = canShowMeetings(user);
     const canBeritaCreate = window.RBAC.can(user, 'beritaAcara', 'create');
     const canAuditRead = window.RBAC.can(user, 'audit', 'read');
-    setDisplay('#headerAddTaskBtn, .add-task-btn', canTaskCreate);
+    setDisplay('.add-task-btn', canTaskCreate);
     setDisplay('#dashAddMeetingBtn, .add-meeting-page-btn, #addMeetingBtn', canMeetingCreate);
     setDisplay('#addUserBtn', window.RBAC.can(user, 'users', 'create'));
     setDisplay('#resetAuditBtn, #clearAuditBtn', window.RBAC.can(user, 'audit', 'manage'));
@@ -615,7 +703,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setDisplay('.delete-user-direct-btn', window.RBAC.can(user, 'users', 'delete'));
     setDisplay('#deleteUserBtn', window.RBAC.can(user, 'users', 'delete'));
     setDisplay('#deleteTaskBtn', window.RBAC.can(user, 'tasks', 'delete'));
-    setDisplay('#addChecklistItemBtn, .modal-checklist-remove-btn', canTaskUpdate);
+    setDisplay('#archiveTaskBtn', false);
+    setDisplay('#addChecklistItemBtn', canTaskUpdate);
     setDisplay('#taskForm button[type="submit"]', canTaskCreate || canTaskUpdate);
     setDisplay('#meetingForm button[type="submit"]', canMeetingCreate || window.RBAC.can(user, 'meetings', 'update'));
     setDisplay('#addBaActivityBtn', canBeritaCreate);
@@ -625,11 +714,14 @@ document.addEventListener('DOMContentLoaded', () => {
     setDisplay('#flowDocumentsSection', window.RBAC.can(user, 'guides', 'read'), 'block');
     setDisplay('#flowDocumentForm', window.RBAC.can(user, 'guides', 'create'), 'grid');
     setDisplay('.delete-guide-btn', window.RBAC.can(user, 'guides', 'delete'));
+    setDisplay('#documentArchiveSection', window.RBAC.can(user, 'documents', 'read'), 'block');
+    setDisplay('#documentArchiveForm', window.RBAC.can(user, 'documents', 'create'), 'grid');
+    setDisplay('.delete-archive-doc-btn', window.RBAC.can(user, 'documents', 'delete'));
     setDisplay('#statsGrid', window.RBAC.canWidget(user, 'stats'), 'grid');
     setDisplay('#dashboardChartsSection', window.RBAC.canWidget(user, 'charts'), 'grid');
     setDisplay('#phaseProgressSection', window.RBAC.canWidget(user, 'charts'), 'block');
     setDisplay('#attentionSection', window.RBAC.canWidget(user, 'attention'), 'block');
-    setDisplay('#meetingsSection', window.RBAC.canWidget(user, 'meetings'), 'block');
+    setDisplay('#meetingsSection', canMeetingRead && window.RBAC.canWidget(user, 'meetings'), 'block');
     setDisplay('#workloadSection', window.RBAC.canWidget(user, 'workload'), 'block');
     ['#statusChartContainer', '#phaseChartContainer'].forEach(selector => {
       const element = document.querySelector(selector);
@@ -716,6 +808,10 @@ document.addEventListener('DOMContentLoaded', () => {
           ['Panduan · Create', 'Upload dokumen panduan proyek', 'guides', 'create'],
           ['Panduan · Read', 'Melihat dan mengunduh panduan', 'guides', 'read'],
           ['Panduan · Delete', 'Menghapus dokumen panduan', 'guides', 'delete'],
+          ['Arsip Dokumen', 'Akses dokumen final dan lampiran', 'pages', 'documents'],
+          ['Arsip · Create', 'Menyimpan dokumen ke arsip', 'documents', 'create'],
+          ['Arsip · Read', 'Melihat dan mengunduh arsip', 'documents', 'read'],
+          ['Arsip · Delete', 'Menghapus dokumen dari arsip', 'documents', 'delete'],
           ['RBAC', 'Akses matriks otorisasi', 'pages', 'rbac']
         ]
       }
@@ -723,7 +819,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const switchHtml = (role, area, permission) => {
       const enabled = Boolean(window.RBAC.matrix[role]?.[area]?.[permission]);
-      return `<label class="rbac-switch" title="Aktifkan atau nonaktifkan permission"><input type="checkbox" class="rbac-permission-toggle" data-role="${role}" data-area="${area}" data-permission="${permission}" ${enabled ? 'checked' : ''}><span class="rbac-switch-track"><span class="rbac-switch-thumb"></span></span></label>`;
+      const locked = role === 'superadmin' && area === 'pages' && permission === 'rbac';
+      return `<label class="rbac-switch" title="${locked ? 'Akses RBAC superadmin wajib aktif' : 'Aktifkan atau nonaktifkan permission'}"><input type="checkbox" class="rbac-permission-toggle" data-role="${role}" data-area="${area}" data-permission="${permission}" ${enabled ? 'checked' : ''} ${locked ? 'disabled' : ''}><span class="rbac-switch-track"><span class="rbac-switch-thumb"></span></span></label>`;
     };
 
     container.innerHTML = `
@@ -777,6 +874,58 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.RBAC.can(user, area, action)) return true;
     Swal.fire({ icon: 'info', title: 'Akses terbatas', text: 'Role Anda tidak memiliki permission untuk aksi ini.', confirmButtonColor: '#1E40AF' });
     return false;
+  }
+
+  function isTaskPic(task, user = window.capstoneStore.getCurrentUser()) {
+    return Boolean(task && user?.name && task.pic === user.name);
+  }
+
+  function canReadTaskDetails(task, user = window.capstoneStore.getCurrentUser()) {
+    return Boolean(task && window.RBAC.can(user, 'tasks', 'read'));
+  }
+
+  function canUpdateTaskProgress(task, user = window.capstoneStore.getCurrentUser()) {
+    if (!task || !window.RBAC.can(user, 'tasks', 'update')) return false;
+    if (user?.role === 'member') return isTaskPic(task, user);
+    return true;
+  }
+
+  function canManageTaskStructure(task, user = window.capstoneStore.getCurrentUser()) {
+    return Boolean(task && window.RBAC.can(user, 'tasks', 'update') && user?.role !== 'member');
+  }
+
+  function canShowMeetings(user = window.capstoneStore.getCurrentUser()) {
+    return Boolean(user && ['superadmin', 'koordinator'].includes(user.role) && window.RBAC.can(user, 'meetings', 'read'));
+  }
+
+  function canArchiveTask(task, user = window.capstoneStore.getCurrentUser()) {
+    return Boolean(task && user?.role === 'superadmin' && window.RBAC.can(user, 'tasks', 'update') && task.status === 'Selesai');
+  }
+
+  function canEditProgressNote(user = window.capstoneStore.getCurrentUser()) {
+    return Boolean(user?.role === 'superadmin');
+  }
+
+  function loadProgressNoteCollapseState() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PROGRESS_NOTE_COLLAPSE_KEY) || '{}');
+      return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+    } catch (e) {
+      localStorage.removeItem(PROGRESS_NOTE_COLLAPSE_KEY);
+      return {};
+    }
+  }
+
+  function isProgressNoteCollapsed(phaseKey, hasContent) {
+    const saved = loadProgressNoteCollapseState();
+    if (Object.prototype.hasOwnProperty.call(saved, phaseKey)) return Boolean(saved[phaseKey]);
+    return Boolean(hasContent);
+  }
+
+  function setProgressNoteCollapsed(phaseKey, collapsed) {
+    const saved = loadProgressNoteCollapseState();
+    saved[phaseKey] = Boolean(collapsed);
+    localStorage.setItem(PROGRESS_NOTE_COLLAPSE_KEY, JSON.stringify(saved));
   }
 
   function initFlowDocuments() {
@@ -909,6 +1058,182 @@ document.addEventListener('DOMContentLoaded', () => {
     applyRbacUi();
   }
 
+  function initDocumentArchive() {
+    const form = document.getElementById('documentArchiveForm');
+    const filter = document.getElementById('documentArchiveCategoryFilter');
+
+    if (filter) {
+      filter.addEventListener('change', event => {
+        documentArchiveCategoryFilter = event.target.value || 'SEMUA';
+        renderDocumentArchives();
+      });
+    }
+
+    if (!form) return;
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!requirePermission('documents', 'create')) return;
+
+      const titleInput = document.getElementById('documentArchiveTitle');
+      const categoryInput = document.getElementById('documentArchiveCategory');
+      const descriptionInput = document.getElementById('documentArchiveDescription');
+      const fileInput = document.getElementById('documentArchiveFile');
+      const button = document.getElementById('documentArchiveUploadBtn');
+      const title = titleInput?.value.trim() || '';
+      const category = categoryInput?.value || 'lainnya';
+      const description = descriptionInput?.value.trim() || '';
+      const file = fileInput?.files?.[0];
+
+      if (!title || !file) {
+        Swal.fire({ icon: 'info', title: 'Data belum lengkap', text: 'Judul dan file dokumen wajib diisi.', confirmButtonColor: '#1E40AF' });
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        Swal.fire({ icon: 'warning', title: 'File terlalu besar', text: 'Ukuran file maksimal 10 MB.', confirmButtonColor: '#1E40AF' });
+        return;
+      }
+
+      const originalLabel = button?.textContent || 'Simpan Dokumen';
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Menyimpan...';
+      }
+
+      const result = await window.capstoneStore.uploadDocumentArchive({ title, category, description, file });
+
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+
+      if (!result?.ok) {
+        Swal.fire({ icon: 'error', title: 'Upload gagal', text: 'Dokumen belum dapat disimpan.', confirmButtonColor: '#1E40AF' });
+        return;
+      }
+
+      window.capstoneStore.logAudit('Upload Arsip Dokumen', `Menyimpan dokumen "${title}" ke arsip`, {
+        actionTag: 'upload_document_archive',
+        object: { type: 'Arsip Dokumen', id: result.data?.id || '', name: title }
+      });
+      form.reset();
+      await loadDocumentArchives(true);
+      Swal.fire({ icon: 'success', title: 'Dokumen tersimpan', text: 'Dokumen sudah tersedia di arsip tim.', timer: 1600, showConfirmButton: false });
+    });
+  }
+
+  function renderDocumentArchiveView() {
+    renderDocumentArchives();
+    loadDocumentArchives();
+  }
+
+  async function loadDocumentArchives(force = false) {
+    if (documentArchivesLoading || (!force && documentArchivesLoaded)) {
+      renderDocumentArchives();
+      return;
+    }
+    documentArchivesLoading = true;
+    renderDocumentArchives();
+    documentArchives = await window.capstoneStore.getDocumentArchives();
+    documentArchivesLoaded = true;
+    documentArchivesLoading = false;
+    renderDocumentArchives();
+    applyRbacUi();
+  }
+
+  function documentArchiveCategoryLabel(category) {
+    return DOCUMENT_ARCHIVE_CATEGORIES[category] || DOCUMENT_ARCHIVE_CATEGORIES.lainnya;
+  }
+
+  function documentArchiveIcon(document) {
+    const mime = document.mimeType || '';
+    const category = document.category || '';
+    if (mime.includes('pdf')) return '📕';
+    if (mime.startsWith('image/') || category === 'diagram_alur') return '🖼️';
+    if (mime.includes('spreadsheet') || mime.includes('excel')) return '📊';
+    if (mime.includes('presentation') || mime.includes('powerpoint')) return '📽️';
+    if (category.includes('surat')) return '✉️';
+    return '📄';
+  }
+
+  function renderDocumentArchives() {
+    const list = document.getElementById('documentArchiveList');
+    const count = document.getElementById('documentArchiveCount');
+    const filter = document.getElementById('documentArchiveCategoryFilter');
+    if (!list || !count) return;
+
+    if (filter && filter.value !== documentArchiveCategoryFilter) {
+      filter.value = documentArchiveCategoryFilter;
+    }
+
+    const visibleDocuments = documentArchiveCategoryFilter === 'SEMUA'
+      ? documentArchives
+      : documentArchives.filter(document => document.category === documentArchiveCategoryFilter);
+
+    count.textContent = `${visibleDocuments.length} dokumen`;
+    if (documentArchivesLoading) {
+      list.innerHTML = '<div class="flow-document-empty">Memuat arsip dokumen...</div>';
+      return;
+    }
+    if (!documentArchives.length) {
+      list.innerHTML = '<div class="flow-document-empty">Belum ada dokumen yang tersimpan di arsip.</div>';
+      return;
+    }
+    if (!visibleDocuments.length) {
+      list.innerHTML = '<div class="flow-document-empty">Belum ada dokumen untuk jenis ini.</div>';
+      return;
+    }
+
+    list.innerHTML = visibleDocuments.map(document => {
+      const date = document.createdAt ? formatWibDateOnly(document.createdAt) : '-';
+      const id = encodeURIComponent(document.id);
+      const title = escapeHtml(document.title);
+      const description = (document.description || '').trim();
+      return `<article class="flow-document-card document-archive-card">
+        <div class="flow-document-icon document-archive-icon" aria-hidden="true">${documentArchiveIcon(document)}</div>
+        <div class="flow-document-content">
+          <div class="document-archive-category">${escapeHtml(documentArchiveCategoryLabel(document.category))}</div>
+          <h3>${title}</h3>
+          <div class="flow-document-meta">${escapeHtml(document.originalName)} · ${formatFileSize(document.fileSize)}</div>
+          <div class="flow-document-meta">Disimpan oleh ${escapeHtml(document.uploadedBy || 'System')} · ${date}</div>
+          ${description ? `<p class="document-archive-description">${escapeHtml(description)}</p>` : ''}
+        </div>
+        <div class="flow-document-actions">
+          <a class="btn btn-secondary" href="backend/api/index.php?resource=document-archives&id=${id}&view=1" target="_blank" rel="noopener">👁️ Lihat</a>
+          <a class="btn btn-primary" href="backend/api/index.php?resource=document-archives&id=${id}&download=1">⬇️ Download</a>
+          <button type="button" class="btn btn-danger delete-archive-doc-btn" data-document-id="${id}" data-document-title="${title}">🗑 Hapus</button>
+        </div>
+      </article>`;
+    }).join('');
+
+    list.querySelectorAll('.delete-archive-doc-btn').forEach(button => {
+      button.addEventListener('click', async () => {
+        if (!requirePermission('documents', 'delete')) return;
+        const confirmed = await Swal.fire({
+          icon: 'warning',
+          title: 'Hapus dokumen?',
+          text: button.dataset.documentTitle || 'Dokumen ini akan dihapus dari arsip.',
+          showCancelButton: true,
+          confirmButtonText: 'Hapus',
+          cancelButtonText: 'Batal',
+          confirmButtonColor: '#DC2626'
+        });
+        if (!confirmed.isConfirmed) return;
+        const documentId = decodeURIComponent(button.dataset.documentId);
+        const result = await window.capstoneStore.deleteDocumentArchive(documentId);
+        if (!result?.ok) {
+          Swal.fire({ icon: 'error', title: 'Gagal menghapus', text: 'Dokumen belum dapat dihapus.', confirmButtonColor: '#1E40AF' });
+          return;
+        }
+        window.capstoneStore.logAudit('Hapus Arsip Dokumen', `Menghapus dokumen "${button.dataset.documentTitle}" dari arsip`, {
+          actionTag: 'delete_document_archive',
+          object: { type: 'Arsip Dokumen', id: documentId, name: button.dataset.documentTitle }
+        });
+        await loadDocumentArchives(true);
+      });
+    });
+    applyRbacUi();
+  }
+
   /* ==========================================
      Render Dasbor Utama
      ========================================== */
@@ -978,7 +1303,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         personalList.querySelectorAll('.attention-item').forEach(btn => {
           btn.addEventListener('click', () => {
-            if (window.RBAC.can(currentUser, 'tasks', 'update')) openEditTaskModal(btn.dataset.taskId);
+            const task = window.capstoneStore.getById(btn.dataset.taskId);
+            if (canReadTaskDetails(task, currentUser)) openEditTaskModal(btn.dataset.taskId);
           });
         });
       }
@@ -1106,7 +1432,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const taskId = btn.dataset.taskId;
             const task = window.capstoneStore.getById(taskId);
             if (task) setPage(task.phase);
-            openEditTaskModal(taskId);
+            if (canReadTaskDetails(task, currentUser)) openEditTaskModal(taskId);
           });
         });
       }
@@ -1266,8 +1592,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderDashboardMeetings(tasks, users) {
     const meetingsContainer = document.getElementById('dashboardMeetingsGrid');
     const meetingCountBadge = document.getElementById('meetingCountBadge');
+    const currentUser = window.capstoneStore.getCurrentUser();
 
     if (!meetingsContainer) return;
+    if (!canShowMeetings(currentUser)) {
+      meetingsContainer.innerHTML = '';
+      if (meetingCountBadge) meetingCountBadge.textContent = '0 pertemuan';
+      return;
+    }
 
     const allMeetings = [];
     tasks.forEach(t => {
@@ -1322,9 +1654,9 @@ document.addEventListener('DOMContentLoaded', () => {
               </a>
             ` : '<span style="font-size: 0.725rem; color: var(--text-muted); italic;">(Tidak ada URL)</span>'}
           </div>
-          ${m.task ? `<button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+          <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
             📄 Generate Berita Acara
-          </button>` : ''}
+          </button>
           <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
             Edit Pertemuan
           </button>
@@ -1363,7 +1695,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const task = window.capstoneStore.getById(taskId);
         if (task) {
           setPage(task.phase);
-          if (window.RBAC.can(window.capstoneStore.getCurrentUser(), 'tasks', 'update')) openEditTaskModal(taskId);
+          if (canReadTaskDetails(task, window.capstoneStore.getCurrentUser())) openEditTaskModal(taskId);
         }
       });
     });
@@ -1419,6 +1751,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!parts) return '-';
     const seconds = includeSeconds ? `:${parts.seconds}` : '';
     return `${parts.day} ${parts.monthName} ${parts.year}, ${parts.hours}:${parts.minutes}${seconds} WIB`;
+  }
+
+  function formatTaskUpdatedAt(task) {
+    const value = task?.updatedAt || task?.createdAt;
+    return value ? formatWibDateTime(value) : '-';
   }
 
   function formatWibDateOnly(value) {
@@ -1490,6 +1827,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function findMeetingForBeritaAcara(meetingId, taskId = '') {
+    const task = taskId ? window.capstoneStore.getById(taskId) : null;
+    if (task?.meetings) {
+      const meeting = task.meetings.find(m => m.id === meetingId);
+      if (meeting) return { meeting, task };
+    }
+
+    const generalMeeting = (window.capstoneStore.getMeetings?.() || []).find(m => m.id === meetingId);
+    return { meeting: generalMeeting || null, task: generalMeeting?.taskId ? window.capstoneStore.getById(generalMeeting.taskId) : null };
+  }
+
   /* ==========================================
      Render Halaman Kanban Tahapan
      ========================================== */
@@ -1503,8 +1851,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const pct = allPhaseTasks.length ? Math.round((phaseDone / allPhaseTasks.length) * 100) : 0;
     const currentUser = window.capstoneStore.getCurrentUser();
     const users = window.capstoneStore.getUsers();
+    const canShowPhaseMeetings = canShowMeetings(currentUser);
+    const canViewArchive = currentUser?.role === 'superadmin';
+    const archivedCount = allPhaseTasks.filter(t => t.archivedAt).length;
+    const visiblePhaseTasks = showArchivedTasks && canViewArchive
+      ? allPhaseTasks
+      : allPhaseTasks.filter(t => !t.archivedAt);
 
-    let filteredTasks = allPhaseTasks;
+    let filteredTasks = visiblePhaseTasks;
     if (activeSearchQuery.trim()) {
       const q = activeSearchQuery.toLowerCase();
       filteredTasks = filteredTasks.filter(t => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
@@ -1546,14 +1900,16 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       </div>
 
+      ${renderProgressNoteSection(phaseKey, currentUser)}
+
       <div class="toolbar">
         <div class="search-filter-group">
           <input type="text" id="taskSearchInput-${phaseKey}" class="input-search" placeholder="🔍 Cari tugas..." value="${escapeHtml(activeSearchQuery)}" />
           
           <select id="taskPicSelect-${phaseKey}" class="select-filter">
-            <option value="SEMUA" ${activePicFilter === 'SEMUA' ? 'selected' : ''}>Semua PIC (${allPhaseTasks.length} tugas)</option>
+            <option value="SEMUA" ${activePicFilter === 'SEMUA' ? 'selected' : ''}>Semua PIC (${visiblePhaseTasks.length} tugas)</option>
             ${getUsersVisibleToViewer(users, currentUser).map(u => {
-              const count = allPhaseTasks.filter(t => t.pic === u.name).length;
+              const count = visiblePhaseTasks.filter(t => t.pic === u.name).length;
               return `<option value="${u.name}" ${activePicFilter === u.name ? 'selected' : ''}>${u.name} (${count} tugas)</option>`;
             }).join('')}
           </select>
@@ -1564,6 +1920,12 @@ document.addEventListener('DOMContentLoaded', () => {
             <option value="Sedang" ${activePriorityFilter === 'Sedang' ? 'selected' : ''}>🟡 Prioritas Sedang</option>
             <option value="Rendah" ${activePriorityFilter === 'Rendah' ? 'selected' : ''}>🟢 Prioritas Rendah</option>
           </select>
+          ${canViewArchive ? `
+            <label class="archive-toggle-filter" title="Tampilkan tugas yang sudah diarsipkan">
+              <input type="checkbox" id="taskArchiveToggle-${phaseKey}" ${showArchivedTasks ? 'checked' : ''} />
+              <span>Tampilkan arsip (${archivedCount})</span>
+            </label>
+          ` : ''}
         </div>
         <div style="display: flex; gap: 0.5rem; align-items: center;">
           <button class="btn btn-secondary add-meeting-page-btn" data-phase="${phaseKey}">🗓️ + Buat Pertemuan</button>
@@ -1594,7 +1956,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
 
       <!-- Seksi Daftar Agenda Pertemuan Khusus Tahap Ini -->
-      <div class="card-box" style="margin-top: 2rem;">
+      <div class="card-box phase-meetings-section" style="margin-top: 2rem; ${canShowPhaseMeetings ? '' : 'display:none;'}">
         <div class="card-box-header">
           <div>
             <h2>🗓️ Jadwal Pertemuan & Bimbingan — ${meta.short}</h2>
@@ -1637,9 +1999,9 @@ document.addEventListener('DOMContentLoaded', () => {
                       </a>
                     ` : '<span style="font-size: 0.725rem; color: var(--text-muted); italic;">(Tidak ada URL)</span>'}
                   </div>
-                  ${m.task ? `<button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+                  <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
                     📄 Generate Berita Acara
-                  </button>` : ''}
+                  </button>
                   <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
                     Edit Pertemuan
                   </button>
@@ -1675,6 +2037,8 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
 
+    bindProgressNoteEvents(pageView, phaseKey);
+
     const searchInput = document.getElementById(`taskSearchInput-${phaseKey}`);
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
@@ -1699,6 +2063,14 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    const archiveToggle = document.getElementById(`taskArchiveToggle-${phaseKey}`);
+    if (archiveToggle) {
+      archiveToggle.addEventListener('change', (e) => {
+        showArchivedTasks = e.target.checked;
+        renderPhaseView(phaseKey);
+      });
+    }
+
     pageView.querySelectorAll('.add-task-btn').forEach(btn => {
       btn.addEventListener('click', () => openNewTaskModal(btn.dataset.phase));
     });
@@ -1710,12 +2082,135 @@ document.addEventListener('DOMContentLoaded', () => {
     pageView.querySelectorAll('.meeting-task-link').forEach(btn => {
       btn.addEventListener('click', () => {
         const task = window.capstoneStore.getById(btn.dataset.taskId);
-        if (task && window.RBAC.can(window.capstoneStore.getCurrentUser(), 'tasks', 'update')) openEditTaskModal(btn.dataset.taskId);
+        if (canReadTaskDetails(task, window.capstoneStore.getCurrentUser())) openEditTaskModal(btn.dataset.taskId);
       });
     });
 
     bindKanbanEvents(pageView);
     applyRbacUi();
+  }
+
+  function renderProgressNoteSection(phaseKey, currentUser) {
+    const note = window.capstoneStore.getProgressNote?.(phaseKey) || { content: '' };
+    const canEdit = canEditProgressNote(currentUser);
+    const content = note.content || '';
+    const collapsed = isProgressNoteCollapsed(phaseKey, Boolean(content));
+    const updatedLabel = note.updatedAt ? formatWibDateTime(note.updatedAt) : 'Belum pernah disimpan';
+    const updatedBy = note.updatedBy || '-';
+    const placeholder = `Update Progress Capstone Project — ${formatWibDateOnly(Date.now())}\n\nContoh:\nHari ini tim menyelesaikan pembahasan data klinik dan menunggu validasi dari pihak apoteker.\n\nRencana berikutnya:\nMelengkapi bagian analisis proses dan menyesuaikan draft proposal.`;
+    const noteText = content || 'Belum ada update progress untuk tahap ini.';
+    const bodyHtml = canEdit ? `
+          <div class="progress-note-editor">
+            <textarea id="progressNoteInput-${phaseKey}" class="progress-note-textarea" placeholder="${escapeHtml(placeholder)}">${escapeHtml(content)}</textarea>
+            <div class="progress-note-actions">
+              <button type="button" class="btn btn-primary save-progress-note-btn" data-phase="${phaseKey}">Simpan Update</button>
+              <button type="button" class="btn btn-secondary copy-progress-note-btn" data-phase="${phaseKey}">Salin Update</button>
+            </div>
+          </div>
+          <div class="progress-note-preview">
+            <div class="progress-note-preview-label">Tampilan untuk tim</div>
+            <pre id="progressNotePreview-${phaseKey}">${escapeHtml(noteText)}</pre>
+          </div>
+    ` : `
+          <div class="progress-note-preview progress-note-reader">
+            <div class="progress-note-preview-label">Update progress tim</div>
+            <pre id="progressNotePreview-${phaseKey}">${escapeHtml(noteText)}</pre>
+            ${content ? `
+              <div class="progress-note-actions">
+                <button type="button" class="btn btn-secondary copy-progress-note-btn" data-phase="${phaseKey}">Salin Update</button>
+              </div>
+            ` : ''}
+          </div>
+    `;
+
+    return `
+      <section class="progress-note-panel ${collapsed ? 'is-collapsed' : ''}" data-phase="${phaseKey}">
+        <div class="progress-note-header">
+          <div>
+            <div class="progress-note-kicker">Catatan Progress</div>
+            <h3>Rangkuman ${PHASE_META[phaseKey]?.short || ''}</h3>
+            <p>Catatan singkat agar seluruh anggota tim tahu perkembangan terbaru dan langkah berikutnya.</p>
+          </div>
+          <div class="progress-note-side">
+            <div class="progress-note-meta">
+              <span>Update: ${escapeHtml(updatedLabel)}</span>
+              <span>Oleh: ${escapeHtml(updatedBy)}</span>
+            </div>
+            <button type="button" class="btn btn-secondary progress-note-toggle-btn" data-phase="${phaseKey}" aria-expanded="${collapsed ? 'false' : 'true'}">
+              <span class="progress-note-toggle-icon" aria-hidden="true">${collapsed ? '▾' : '▴'}</span>
+              <span>${collapsed ? 'Tampilkan' : 'Sembunyikan'}</span>
+            </button>
+          </div>
+        </div>
+        <div class="progress-note-grid ${canEdit ? '' : 'is-view-only'} ${collapsed ? 'is-hidden' : ''}">
+          ${bodyHtml}
+        </div>
+      </section>
+    `;
+  }
+
+  function bindProgressNoteEvents(pageView, phaseKey) {
+    const input = pageView.querySelector(`#progressNoteInput-${phaseKey}`);
+    const preview = pageView.querySelector(`#progressNotePreview-${phaseKey}`);
+    const saveBtn = pageView.querySelector(`.save-progress-note-btn[data-phase="${phaseKey}"]`);
+    const copyBtn = pageView.querySelector(`.copy-progress-note-btn[data-phase="${phaseKey}"]`);
+    const toggleBtn = pageView.querySelector(`.progress-note-toggle-btn[data-phase="${phaseKey}"]`);
+
+    const updateToggleButton = (button, collapsed) => {
+      button.setAttribute('aria-expanded', String(!collapsed));
+      button.innerHTML = `
+        <span class="progress-note-toggle-icon" aria-hidden="true">${collapsed ? '▾' : '▴'}</span>
+        <span>${collapsed ? 'Tampilkan' : 'Sembunyikan'}</span>
+      `;
+    };
+
+    toggleBtn?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const panel = toggleBtn.closest('.progress-note-panel');
+      const body = panel?.querySelector('.progress-note-grid');
+      const nextCollapsed = !panel?.classList.contains('is-collapsed');
+      setProgressNoteCollapsed(phaseKey, nextCollapsed);
+      panel?.classList.toggle('is-collapsed', nextCollapsed);
+      body?.classList.toggle('is-hidden', nextCollapsed);
+      updateToggleButton(toggleBtn, nextCollapsed);
+    });
+
+    input?.addEventListener('input', () => {
+      if (preview) preview.textContent = input.value || 'Belum ada update progress untuk tahap ini.';
+    });
+
+    saveBtn?.addEventListener('click', () => {
+      const saved = window.capstoneStore.saveProgressNote(phaseKey, input?.value || '');
+      if (preview) preview.textContent = saved.content || 'Belum ada update progress untuk tahap ini.';
+      renderPhaseView(phaseKey);
+      Swal.fire({
+        icon: 'success',
+        title: 'Update progress tersimpan',
+        text: 'Anggota tim dapat melihat rangkuman terbaru.',
+        timer: 1300,
+        showConfirmButton: false
+      });
+    });
+
+    copyBtn?.addEventListener('click', () => {
+      const text = input?.value || window.capstoneStore.getProgressNote?.(phaseKey)?.content || '';
+      if (!text) {
+        Swal.fire({ icon: 'info', title: 'Belum ada update', text: 'Rangkuman progress masih kosong.', confirmButtonColor: '#1E40AF' });
+        return;
+      }
+      navigator.clipboard.writeText(text).then(() => {
+        Swal.fire({
+          icon: 'success',
+          title: 'Update disalin',
+          text: 'Rangkuman progress siap dibagikan.',
+          timer: 1200,
+          showConfirmButton: false
+        });
+      }).catch(() => {
+        Swal.fire({ icon: 'info', title: 'Tidak bisa menyalin otomatis', text: 'Silakan salin rangkuman progress secara manual.', confirmButtonColor: '#1E40AF' });
+      });
+    });
   }
 
   function renderTaskCard(t, currentUser, users) {
@@ -1730,16 +2225,28 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const isMine = currentUser && currentUser.role === 'member' && currentUser.name === t.pic;
-    const canUpdate = window.RBAC.can(currentUser, 'tasks', 'update');
+    const canUpdate = canUpdateTaskProgress(t, currentUser);
+    const isReadonlyProgress = currentUser?.role === 'member' && canReadTaskDetails(t, currentUser) && !canUpdate;
+    const updatedAtLabel = formatTaskUpdatedAt(t);
+    const showMeetingTag = canShowMeetings(currentUser);
+    const isArchived = Boolean(t.archivedAt);
 
     return `
-      <div class="task-card" draggable="${canUpdate ? 'true' : 'false'}" data-task-id="${t.id}" style="${isMine ? 'border-color: var(--ut-blue-primary);' : ''}">
+      <div class="task-card ${isReadonlyProgress ? 'is-readonly-progress' : ''} ${isArchived ? 'is-archived' : ''}" draggable="${canUpdate && !isArchived ? 'true' : 'false'}" data-task-id="${t.id}" style="${isMine ? 'border-color: var(--ut-blue-primary);' : ''}">
         <div class="task-priority-indicator" style="background: ${priorityColors[t.priority] || 'transparent'}"></div>
         <div class="card-header-row">
           <div class="card-title">${escapeHtml(t.title)}</div>
-          <span class="priority-badge ${t.priority}">${t.priority}</span>
+          <div style="display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap; justify-content:flex-end;">
+            ${isArchived ? '<span class="task-archive-badge">Arsip</span>' : ''}
+            ${isReadonlyProgress ? '<span class="task-readonly-badge">Hanya lihat</span>' : ''}
+            <span class="priority-badge ${t.priority}">${t.priority}</span>
+          </div>
         </div>
         <div class="card-description">${escapeHtml(t.description || '')}</div>
+        <div class="task-card-meta">
+          <span>Update</span>
+          <strong>${escapeHtml(updatedAtLabel)}</strong>
+        </div>
         <div class="card-footer">
           <div class="card-pic-tag">
             <span class="pic-mini-avatar" style="background: ${u.color}">${u.initial}</span>
@@ -1751,7 +2258,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
           ` : ''}
         </div>
-        ${t.meetings && t.meetings.length > 0 ? `
+        ${showMeetingTag && t.meetings && t.meetings.length > 0 ? `
           <div class="task-card-meetings-tag">
             🗓️ ${t.meetings.length} Pertemuan ${t.meetings.some(m => m.url) ? '• 🔗 Link' : ''}
           </div>
@@ -1810,6 +2317,7 @@ document.addEventListener('DOMContentLoaded', () => {
                       <span class="workload-avatar" style="background: ${u.color}; margin-bottom:0;">${u.initial}</span>
                       <div>
                         <div style="font-weight: 600;">${u.name} ${isCurrentlyActive ? '<span style="font-size:0.7rem; color:var(--ut-blue-primary);">(Aktif Saat Ini)</span>' : ''}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(u.fullName || u.name)}${u.nim ? ` · ${escapeHtml(u.nim)}` : ''}</div>
                       </div>
                     </div>
                   </td>
@@ -1876,6 +2384,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }).then((result) => {
             if (result.isConfirmed) {
               if (!requirePermission('users', 'delete')) return;
+              if (!canDeleteUserId(uId)) return;
               window.capstoneStore.deleteUser(uId);
               renderCurrentView();
               Swal.fire('Terhapus!', 'Pengguna berhasil dihapus.', 'success');
@@ -2541,21 +3050,24 @@ document.addEventListener('DOMContentLoaded', () => {
   function bindKanbanEvents(container) {
     const cards = container.querySelectorAll('.task-card');
     const columns = container.querySelectorAll('.kanban-column');
-    const canUpdate = window.RBAC.can(window.capstoneStore.getCurrentUser(), 'tasks', 'update');
+    const currentUser = window.capstoneStore.getCurrentUser();
 
     cards.forEach(card => {
-      if (!canUpdate) return;
-      card.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData('text/plain', card.dataset.taskId);
-        card.style.opacity = '0.5';
-      });
+      const task = window.capstoneStore.getById(card.dataset.taskId);
+      const canDragCard = canUpdateTaskProgress(task, currentUser) && !task?.archivedAt;
+      card.draggable = canDragCard;
+      if (canDragCard) {
+        card.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', card.dataset.taskId);
+          card.style.opacity = '0.5';
+        });
 
-      card.addEventListener('dragend', () => {
-        card.style.opacity = '1';
-      });
-
+        card.addEventListener('dragend', () => {
+          card.style.opacity = '1';
+        });
+      }
       card.addEventListener('click', () => {
-        openEditTaskModal(card.dataset.taskId);
+        if (canReadTaskDetails(task, currentUser)) openEditTaskModal(card.dataset.taskId);
       });
     });
 
@@ -2572,9 +3084,10 @@ document.addEventListener('DOMContentLoaded', () => {
       col.addEventListener('drop', (e) => {
         e.preventDefault();
         col.classList.remove('drop-hover');
-        if (!canUpdate) return;
         const taskId = e.dataTransfer.getData('text/plain');
         const targetStatus = col.dataset.status;
+        const task = window.capstoneStore.getById(taskId);
+        if (!canUpdateTaskProgress(task, currentUser) || task?.archivedAt) return;
 
         if (taskId && targetStatus) {
           window.capstoneStore.update(taskId, { status: targetStatus });
@@ -2592,6 +3105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const taskForm = document.getElementById('taskForm');
     const modalTitle = document.getElementById('modalTitle');
     const deleteTaskBtn = document.getElementById('deleteTaskBtn');
+    const archiveTaskBtn = document.getElementById('archiveTaskBtn');
 
     if (!taskModalBackdrop) return;
 
@@ -2612,6 +3126,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const addChecklistItemBtn = document.getElementById('addChecklistItemBtn');
     if (addChecklistItemBtn) {
       addChecklistItemBtn.addEventListener('click', () => {
+        if (!modalTaskCanManageStructure) return;
         modalChecklistState.push({ text: '', done: false });
         renderModalChecklistBuilder();
         const textInputs = document.querySelectorAll('.modal-checklist-text');
@@ -2654,8 +3169,103 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    if (archiveTaskBtn) {
+      archiveTaskBtn.addEventListener('click', () => {
+        const taskId = document.getElementById('taskIdInput').value;
+        const task = window.capstoneStore.getById(taskId);
+        if (!task || !canArchiveTask(task)) return;
+        const isArchived = Boolean(task.archivedAt);
+        Swal.fire({
+          title: isArchived ? 'Pulihkan Tugas?' : 'Arsipkan Tugas?',
+          text: isArchived
+            ? 'Tugas akan kembali tampil di board utama.'
+            : 'Tugas selesai ini akan disembunyikan dari board utama, tetapi datanya tetap tersimpan.',
+          icon: 'question',
+          showCancelButton: true,
+          confirmButtonColor: '#1E40AF',
+          cancelButtonColor: '#64748B',
+          confirmButtonText: isArchived ? 'Ya, Pulihkan' : 'Ya, Arsipkan',
+          cancelButtonText: 'Batal'
+        }).then((result) => {
+          if (!result.isConfirmed) return;
+          window.capstoneStore.update(taskId, { archivedAt: isArchived ? null : Date.now() });
+          renderCurrentView();
+          if (isArchived) {
+            openEditTaskModal(taskId);
+            Swal.fire({
+              icon: 'success',
+              title: 'Dipulihkan!',
+              text: 'Tugas kembali ke mode edit superadmin.',
+              timer: 1200,
+              showConfirmButton: false
+            });
+          } else {
+            closeTaskModal();
+            Swal.fire('Diarsipkan!', 'Tugas selesai masuk arsip.', 'success');
+          }
+        });
+      });
+    }
+
     // Modal Pertemuan Standalone Listeners
     bindMeetingModalListeners(document.getElementById('meetingModalBackdrop'));
+  }
+
+  function setTaskModalAccess({ canUpdateProgress, canManageStructure, canDelete, canSubmit, canArchive = false, archiveLabel = 'Arsipkan Tugas', readonlyMessage = 'Status dan checklist hanya bisa diubah oleh PIC tugas ini.' }) {
+    modalTaskCanUpdateProgress = Boolean(canUpdateProgress);
+    modalTaskCanManageStructure = Boolean(canManageStructure);
+    const isReadonlyMode = !modalTaskCanUpdateProgress && !modalTaskCanManageStructure;
+
+    const taskForm = document.getElementById('taskForm');
+    taskForm?.classList.toggle('task-readonly-mode', isReadonlyMode);
+
+    const readonlyNotice = document.getElementById('taskReadonlyNotice');
+    if (readonlyNotice) {
+      readonlyNotice.hidden = !isReadonlyMode;
+      readonlyNotice.innerHTML = `
+        <strong>${archiveLabel === 'Pulihkan dari Arsip' ? 'Mode arsip' : 'Mode lihat saja'}</strong>
+        <span>${escapeHtml(readonlyMessage)}</span>
+      `;
+    }
+
+    ['taskTitleInput', 'taskDescInput', 'taskPhaseSelect', 'taskPicSelect', 'taskPrioritySelect'].forEach(id => {
+      const field = document.getElementById(id);
+      if (field) field.disabled = !modalTaskCanManageStructure;
+    });
+
+    const statusSelect = document.getElementById('taskStatusSelect');
+    if (statusSelect) statusSelect.disabled = !modalTaskCanUpdateProgress;
+
+    const addChecklistItemBtn = document.getElementById('addChecklistItemBtn');
+    if (addChecklistItemBtn) {
+      addChecklistItemBtn.disabled = !modalTaskCanManageStructure;
+      addChecklistItemBtn.style.display = modalTaskCanManageStructure ? 'inline-flex' : 'none';
+    }
+
+    document.querySelectorAll('.modal-checklist-text').forEach(input => {
+      input.readOnly = !modalTaskCanManageStructure;
+    });
+    document.querySelectorAll('.modal-checklist-check').forEach(input => {
+      input.disabled = !modalTaskCanUpdateProgress;
+    });
+    document.querySelectorAll('.modal-checklist-remove-btn').forEach(btn => {
+      btn.style.display = modalTaskCanManageStructure ? 'inline-flex' : 'none';
+    });
+
+    const deleteTaskBtn = document.getElementById('deleteTaskBtn');
+    if (deleteTaskBtn) deleteTaskBtn.style.display = canDelete ? 'inline-flex' : 'none';
+
+    const archiveTaskBtn = document.getElementById('archiveTaskBtn');
+    if (archiveTaskBtn) {
+      archiveTaskBtn.style.display = canArchive ? 'inline-flex' : 'none';
+      archiveTaskBtn.textContent = archiveLabel;
+    }
+
+    const submitBtn = document.querySelector('#taskForm button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.style.display = canSubmit ? 'inline-flex' : 'none';
+      submitBtn.textContent = modalTaskCanManageStructure ? 'Simpan Tugas' : 'Simpan Progress';
+    }
   }
 
   function ensureMeetingModal() {
@@ -2985,9 +3595,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('taskPhaseSelect').value = defaultPhase;
     document.getElementById('taskStatusSelect').value = 'Belum Dimulai';
     document.getElementById('taskPrioritySelect').value = 'Sedang';
+    const timestampMeta = document.getElementById('taskTimestampMeta');
+    if (timestampMeta) {
+      timestampMeta.hidden = true;
+      timestampMeta.innerHTML = '';
+    }
 
     populatePicOptions(currentUser.role === 'member' ? currentUser.name : 'Febby');
     
+    setTaskModalAccess({
+      canUpdateProgress: true,
+      canManageStructure: true,
+      canDelete: false,
+      canSubmit: true
+    });
     modalChecklistState = [];
     renderModalChecklistBuilder();
 
@@ -2998,13 +3619,19 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function openEditTaskModal(taskId) {
-    if (!window.RBAC.can(window.capstoneStore.getCurrentUser(), 'tasks', 'update')) return;
+    const currentUser = window.capstoneStore.getCurrentUser();
     const taskModalBackdrop = document.getElementById('taskModalBackdrop');
     const modalTitle = document.getElementById('modalTitle');
-    const deleteTaskBtn = document.getElementById('deleteTaskBtn');
 
     const task = window.capstoneStore.getById(taskId);
     if (!task || !taskModalBackdrop) return;
+    if (!canReadTaskDetails(task, currentUser)) return;
+
+    const isArchived = Boolean(task.archivedAt);
+    const canUpdateProgress = canUpdateTaskProgress(task, currentUser) && !isArchived;
+    const canManageStructure = canManageTaskStructure(task, currentUser) && !isArchived;
+    const canArchive = canArchiveTask(task, currentUser);
+    const archiveLabel = isArchived ? 'Pulihkan dari Arsip' : 'Arsipkan Tugas';
 
     document.getElementById('taskIdInput').value = task.id;
     document.getElementById('taskTitleInput').value = task.title;
@@ -3015,19 +3642,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('taskStatusSelect').value = task.status;
     document.getElementById('taskPrioritySelect').value = task.priority;
+    const timestampMeta = document.getElementById('taskTimestampMeta');
+    if (timestampMeta) {
+      timestampMeta.hidden = false;
+      timestampMeta.innerHTML = `
+        <span><strong>Update terakhir</strong>: ${escapeHtml(formatTaskUpdatedAt(task))}</span>
+        <span>Dibuat: ${escapeHtml(task.createdAt ? formatWibDateTime(task.createdAt) : '-')}</span>
+        ${task.archivedAt ? `<span>Arsip: ${escapeHtml(formatWibDateTime(task.archivedAt))}</span>` : ''}
+      `;
+    }
     
     modalChecklistState = (task.checklist || []).map((item, idx) => ({
       text: item,
       done: (task.checklistDone || [])[idx] || false
     }));
 
+    setTaskModalAccess({
+      canUpdateProgress,
+      canManageStructure,
+      canDelete: canManageStructure && window.RBAC.can(currentUser, 'tasks', 'delete'),
+      canSubmit: canUpdateProgress || canManageStructure,
+      canArchive,
+      archiveLabel,
+      readonlyMessage: isArchived
+        ? 'Tugas arsip sengaja dikunci. Klik Pulihkan dari Arsip agar superadmin bisa mengedit lagi.'
+        : 'Status dan checklist hanya bisa diubah oleh PIC tugas ini.'
+    });
     renderModalChecklistBuilder();
 
-    if (modalTitle) modalTitle.textContent = 'Edit Detail Tugas';
-    if (deleteTaskBtn) deleteTaskBtn.style.display = 'inline-flex';
+    if (modalTitle) {
+      modalTitle.textContent = canManageStructure
+        ? 'Edit Detail Tugas'
+        : canUpdateProgress
+          ? 'Update Progress Tugas'
+          : isArchived
+            ? 'Detail Tugas Arsip'
+            : 'Detail Tugas';
+    }
 
     taskModalBackdrop.classList.add('active');
     applyRbacUi();
+    setTaskModalAccess({
+      canUpdateProgress,
+      canManageStructure,
+      canDelete: canManageStructure && window.RBAC.can(currentUser, 'tasks', 'delete'),
+      canSubmit: canUpdateProgress || canManageStructure,
+      canArchive,
+      archiveLabel,
+      readonlyMessage: isArchived
+        ? 'Tugas arsip sengaja dikunci. Klik Pulihkan dari Arsip agar superadmin bisa mengedit lagi.'
+        : 'Status dan checklist hanya bisa diubah oleh PIC tugas ini.'
+    });
   }
 
   function renderModalChecklistBuilder() {
@@ -3037,7 +3702,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (modalChecklistState.length === 0) {
       container.innerHTML = `
         <div style="font-size: 0.775rem; color: var(--text-muted); font-style: italic; padding: 0.4rem 0;">
-          Belum ada sub-tugas. Klik <strong>"➕ Tambah Sub-tugas"</strong> di atas untuk menambahkan item.
+          ${modalTaskCanManageStructure ? 'Belum ada sub-tugas. Klik <strong>"+ Tambah Sub-tugas</strong>" di atas untuk menambahkan item.' : 'Belum ada sub-tugas pada tugas ini.'}
         </div>
       `;
       return;
@@ -3046,10 +3711,10 @@ document.addEventListener('DOMContentLoaded', () => {
     container.innerHTML = `
       <div class="modal-checklist-builder">
         ${modalChecklistState.map((item, idx) => `
-          <div class="modal-checklist-row">
-            <input type="checkbox" class="modal-checklist-check" ${item.done ? 'checked' : ''} data-index="${idx}" />
-            <input type="text" class="modal-checklist-text ${item.done ? 'is-done' : ''}" value="${escapeHtml(item.text)}" placeholder="Ketik nama sub-tugas..." data-index="${idx}" />
-            <button type="button" class="modal-checklist-remove-btn" data-index="${idx}" title="Hapus sub-tugas ini">&times;</button>
+          <div class="modal-checklist-row ${(!modalTaskCanUpdateProgress && !modalTaskCanManageStructure) ? 'is-readonly' : ''}">
+            <input type="checkbox" class="modal-checklist-check" ${item.done ? 'checked' : ''} ${modalTaskCanUpdateProgress ? '' : 'disabled'} data-index="${idx}" />
+            <input type="text" class="modal-checklist-text ${item.done ? 'is-done' : ''}" value="${escapeHtml(item.text)}" placeholder="Ketik nama sub-tugas..." data-index="${idx}" ${modalTaskCanManageStructure ? '' : 'readonly'} />
+            <button type="button" class="modal-checklist-remove-btn" data-index="${idx}" title="Hapus sub-tugas ini" style="${modalTaskCanManageStructure ? '' : 'display:none;'}">&times;</button>
           </div>
         `).join('')}
       </div>
@@ -3057,6 +3722,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     container.querySelectorAll('.modal-checklist-text').forEach(input => {
       input.addEventListener('input', (e) => {
+        if (!modalTaskCanManageStructure) return;
         const idx = parseInt(e.target.dataset.index, 10);
         if (modalChecklistState[idx]) {
           modalChecklistState[idx].text = e.target.value;
@@ -3066,6 +3732,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     container.querySelectorAll('.modal-checklist-check').forEach(chk => {
       chk.addEventListener('change', (e) => {
+        if (!modalTaskCanUpdateProgress) return;
         const idx = parseInt(e.target.dataset.index, 10);
         if (modalChecklistState[idx]) {
           modalChecklistState[idx].done = e.target.checked;
@@ -3080,6 +3747,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     container.querySelectorAll('.modal-checklist-remove-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
+        if (!modalTaskCanManageStructure) return;
         const idx = parseInt(e.target.dataset.index, 10);
         modalChecklistState.splice(idx, 1);
         renderModalChecklistBuilder();
@@ -3091,6 +3759,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const editingTaskId = document.getElementById('taskIdInput')?.value;
     if (!requirePermission('tasks', editingTaskId ? 'update' : 'create')) return;
     const taskId = document.getElementById('taskIdInput').value;
+    const existingTask = taskId ? window.capstoneStore.getById(taskId) : null;
+    if (taskId && existingTask?.archivedAt) {
+      Swal.fire({
+        icon: 'info',
+        title: 'Tugas sudah diarsipkan',
+        text: 'Pulihkan tugas dari arsip terlebih dahulu jika perlu diedit lagi.',
+        confirmButtonColor: '#1E40AF'
+      });
+      return;
+    }
+    if (taskId && !canUpdateTaskProgress(existingTask, window.capstoneStore.getCurrentUser())) {
+      Swal.fire({
+        icon: 'info',
+        title: 'Status hanya bisa diubah PIC',
+        text: 'Kamu tetap bisa melihat detail tugas ini, tetapi perubahan progress hanya dapat dilakukan oleh PIC tugas tersebut.',
+        confirmButtonColor: '#1E40AF'
+      });
+      return;
+    }
+
     const title = document.getElementById('taskTitleInput').value.trim();
     const description = document.getElementById('taskDescInput').value.trim();
     const phase = document.getElementById('taskPhaseSelect').value;
@@ -3101,9 +3789,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const validItems = modalChecklistState.filter(item => item.text.trim() !== '');
     const checklist = validItems.map(item => item.text.trim());
     const checklistDone = validItems.map(item => item.done);
+    const currentUser = window.capstoneStore.getCurrentUser();
 
     if (taskId) {
-      window.capstoneStore.update(taskId, {
+      const updatePayload = currentUser?.role === 'member'
+        ? { status, checklist, checklistDone }
+        : {
         title,
         description,
         phase,
@@ -3112,7 +3803,8 @@ document.addEventListener('DOMContentLoaded', () => {
         priority,
         checklist,
         checklistDone
-      });
+      };
+      window.capstoneStore.update(taskId, updatePayload);
     } else {
       window.capstoneStore.add({
         title: title || 'Tugas Baru Capstone',
@@ -3165,6 +3857,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!requirePermission('users', 'delete')) return;
         const userId = document.getElementById('userIdInput').value;
         if (userId && confirm(`Apakah Anda yakin ingin menghapus pengguna "${userId}" dari sistem?`)) {
+          if (!canDeleteUserId(userId)) return;
           window.capstoneStore.deleteUser(userId);
           closeUserModal();
           renderCurrentView();
@@ -3185,8 +3878,14 @@ document.addEventListener('DOMContentLoaded', () => {
     userForm.reset();
     document.getElementById('userIdInput').value = '';
     document.getElementById('userNameInput').disabled = false;
+    document.getElementById('userUsernameInput').disabled = false;
     document.getElementById('userRoleFormSelect').value = 'member';
     document.getElementById('userColorSelect').value = '#1E40AF';
+    document.getElementById('userFullNameInput').value = '';
+    document.getElementById('userUsernameInput').value = '';
+    document.getElementById('userNimInput').value = '';
+    document.getElementById('userPasswordInput').value = '';
+    document.getElementById('userPasswordInput').required = true;
 
     if (userModalTitle) userModalTitle.textContent = 'Tambah Pengguna Baru';
     if (deleteUserBtn) deleteUserBtn.style.display = 'none';
@@ -3205,6 +3904,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('userIdInput').value = user.id;
     document.getElementById('userNameInput').value = user.name;
+    document.getElementById('userFullNameInput').value = user.fullName || user.name;
+    document.getElementById('userUsernameInput').value = user.username || '';
+    document.getElementById('userNimInput').value = user.nim || '';
+    document.getElementById('userPasswordInput').value = '';
+    document.getElementById('userPasswordInput').required = false;
     document.getElementById('userRoleFormSelect').value = user.role;
     document.getElementById('userColorSelect').value = user.color || '#1E40AF';
 
@@ -3225,29 +3929,71 @@ document.addEventListener('DOMContentLoaded', () => {
     const userId = document.getElementById('userIdInput').value;
     if (!requirePermission('users', userId ? 'update' : 'create')) return;
     const name = document.getElementById('userNameInput').value.trim();
+    const fullName = document.getElementById('userFullNameInput').value.trim();
+    const username = document.getElementById('userUsernameInput').value.trim();
+    const nim = document.getElementById('userNimInput').value.trim();
+    const password = document.getElementById('userPasswordInput').value;
     const role = document.getElementById('userRoleFormSelect').value;
     const color = document.getElementById('userColorSelect').value;
+    const currentUser = window.capstoneStore.getCurrentUser();
+    const existingUser = userId ? window.capstoneStore.getUserById(userId) : null;
 
-    if (!name) return;
+    if (!name || !fullName || !username) {
+      Swal.fire({ icon: 'info', title: 'Data belum lengkap', text: 'Nama tampilan, nama lengkap, dan username wajib diisi.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+    if (!userId && password.length < 8) {
+      Swal.fire({ icon: 'info', title: 'Password wajib diisi', text: 'Password sementara pengguna baru minimal 8 karakter.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+    if (userId && password && password.length < 8) {
+      Swal.fire({ icon: 'info', title: 'Password terlalu pendek', text: 'Password baru minimal 8 karakter.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+    if (existingUser?.role === 'superadmin' && role !== 'superadmin' && countLocalSuperadmins() <= 1) {
+      Swal.fire({ icon: 'warning', title: 'Tidak bisa mengubah role', text: 'Minimal harus ada satu superadmin aktif.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+    if (currentUser?.id === userId && role !== currentUser.role) {
+      Swal.fire({ icon: 'warning', title: 'Tidak bisa mengubah role sendiri', text: 'Gunakan akun superadmin lain untuk mengubah role akun ini.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+
+    const payload = { name, fullName, username, nim, role, color };
+    if (password) payload.password = password;
 
     if (userId) {
-      window.capstoneStore.updateUser(userId, { name, role, color });
+      window.capstoneStore.updateUser(userId, payload);
     } else {
-      window.capstoneStore.addUser({ name, role, color });
+      window.capstoneStore.addUser(payload);
     }
 
     closeUserModal();
     renderCurrentView();
   }
 
+  function countLocalSuperadmins() {
+    return Object.values(window.capstoneStore.getUsers() || {}).filter(user => user.role === 'superadmin').length;
+  }
+
+  function canDeleteUserId(userId) {
+    const currentUser = window.capstoneStore.getCurrentUser();
+    const user = window.capstoneStore.getUserById(userId);
+    if (currentUser?.id === userId) {
+      Swal.fire({ icon: 'warning', title: 'Tidak bisa menghapus akun sendiri', text: 'Login dengan akun superadmin lain terlebih dahulu.', confirmButtonColor: '#1E40AF' });
+      return false;
+    }
+    if (user?.role === 'superadmin' && countLocalSuperadmins() <= 1) {
+      Swal.fire({ icon: 'warning', title: 'Tidak bisa menghapus superadmin terakhir', text: 'Minimal harus ada satu superadmin aktif.', confirmButtonColor: '#1E40AF' });
+      return false;
+    }
+    return true;
+  }
+
   /* ==========================================
      Tombol Global
      ========================================== */
   function initGlobalButtons() {
-    document.getElementById('headerAddTaskBtn')?.addEventListener('click', () => {
-      const targetPhase = currentPage.startsWith('tugas') ? currentPage : 'tugas1';
-      openNewTaskModal(targetPhase);
-    });
   }
 
   /* ==========================================
@@ -3437,11 +4183,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('baMeetingIdInput').value = meetingId || '';
     document.getElementById('baTaskIdInput').value = taskId || '';
 
-    const task = taskId ? window.capstoneStore.getById(taskId) : null;
-    let meeting = null;
-    if (task && task.meetings) {
-      meeting = task.meetings.find(m => m.id === meetingId);
-    }
+    const { meeting, task } = findMeetingForBeritaAcara(meetingId, taskId);
 
     // Default Judul Proyek
     document.getElementById('baJudulInput').value = "Pengembangan Sistem Informasi Manajemen Persediaan Obat pada Klinik Shifa Medika";
@@ -3472,23 +4214,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Attendance checkboxes
     renderBaAttendanceCheckboxes();
 
-    // Activities State (Default sample matching reference image if empty)
-    if (baActivitiesState.length === 0) {
-      baActivitiesState = [
-        {
-          aktivitas: '1. Pembahasan panduan dan tahapan Capstone Project',
-          luaran: 'Tim memahami gambaran Capstone Project, tahapan Tugas 1–3, serta fokus awal pada persiapan Tugas 1.',
-          pic: 'Febby, Cintia, Rival',
-          catatan: 'Farah dan Anggi belum dapat mengikuti pertemuan, sehingga perlu penyamaan pemahaman pada pertemuan berikutnya.'
-        },
-        {
-          aktivitas: '2. Pembahasan studi kasus Klinik Shifa Medika',
-          luaran: 'Disepakati arah studi kasus pada pengelolaan persediaan obat di Unit Farmasi Klinik Shifa Medika.',
-          pic: 'Febby, Cintia, Rival',
-          catatan: 'Informasi proses kerja masih akan dilengkapi melalui dokumen analisis.'
-        }
-      ];
-    }
+    baActivitiesState = buildDefaultBeritaAcaraActivities(meeting, task);
     renderBaActivitiesInModal();
     renderBaImagePreviews();
     const printBtn = document.getElementById('baPrintBtn');
@@ -3505,20 +4231,45 @@ document.addEventListener('DOMContentLoaded', () => {
     const container = document.getElementById('baAttendanceCheckboxes');
     if (!container) return;
 
-    const allMembers = [
-      { name: 'Febby', fullName: 'Febby Triana Amalia', nim: '050627749', defaultHadir: true },
-      { name: 'Cintia', fullName: 'Rohatul Cintia Nurfajar', nim: '050765966', defaultHadir: true },
-      { name: 'Rival', fullName: 'Rival Fauzi', nim: '051391346', defaultHadir: true },
-      { name: 'Farah', fullName: 'Farah Syahira', nim: '051417488', defaultHadir: false },
-      { name: 'Anggi', fullName: 'Anggi Hermawan', nim: '051316918', defaultHadir: false }
-    ];
+    const allMembers = getBeritaAcaraMembers();
 
     container.innerHTML = allMembers.map(m => `
       <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; cursor: pointer; color: var(--text-main);">
         <input type="checkbox" class="ba-att-check" value="${m.name}" ${m.defaultHadir ? 'checked' : ''} style="accent-color: var(--ut-blue-primary);" />
-        <span><strong>${m.name}</strong> (${m.nim})</span>
+        <span><strong>${escapeHtml(m.name)}</strong>${m.nim ? ` (${escapeHtml(m.nim)})` : ''}</span>
       </label>
     `).join('');
+  }
+
+  function getBeritaAcaraMembers() {
+    const currentUser = window.capstoneStore.getCurrentUser();
+    return Object.values(window.capstoneStore.getUsers() || {})
+      .filter(user => user && user.name)
+      .map(user => ({
+        name: user.name,
+        fullName: user.fullName || user.name,
+        nim: user.nim || '',
+        defaultHadir: currentUser ? user.id === currentUser.id || user.name === currentUser.name : true
+      }));
+  }
+
+  function buildDefaultBeritaAcaraActivities(meeting, task) {
+    const members = getBeritaAcaraMembers();
+    const picList = members.map(member => member.name).join(', ') || 'Tim Capstone';
+    const meetingTitle = meeting?.title || 'Pertemuan Capstone Project';
+    const meetingNotes = (meeting?.notes || '').trim();
+    const taskTitle = task?.title || '';
+
+    return [
+      {
+        aktivitas: `1. ${meetingTitle}`,
+        luaran: taskTitle
+          ? `Tim membahas perkembangan dan tindak lanjut tugas "${taskTitle}".`
+          : 'Tim membahas perkembangan dan tindak lanjut kegiatan Capstone Project.',
+        pic: task?.pic || picList,
+        catatan: meetingNotes || 'Catatan pembahasan dapat dilengkapi sesuai hasil pertemuan.'
+      }
+    ];
   }
 
   function renderBaActivitiesInModal() {
@@ -3532,11 +4283,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     container.innerHTML = baActivitiesState.map((a, idx) => `
       <div class="ba-activity-row">
-        <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="aktivitas" rows="2" placeholder="Topik / Aktivitas...">${escapeHtml(a.aktivitas)}</textarea>
-        <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="luaran" rows="2" placeholder="Hasil / Luaran...">${escapeHtml(a.luaran)}</textarea>
-        <input type="text" class="form-input ba-act-input" data-index="${idx}" data-field="pic" value="${escapeHtml(a.pic)}" placeholder="PIC (Febby, Cintia...)" />
-        <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="catatan" rows="2" placeholder="Catatan / Kendala...">${escapeHtml(a.catatan)}</textarea>
-        <button type="button" class="ba-remove-act-btn" data-index="${idx}" style="background: transparent; border: none; color: #EF4444; font-size: 1.2rem; cursor: pointer; padding: 0.2rem;" title="Hapus baris">&times;</button>
+        <div class="ba-activity-head">
+          <span>Aktivitas ${idx + 1}</span>
+          <button type="button" class="ba-remove-act-btn" data-index="${idx}" title="Hapus aktivitas">&times;</button>
+        </div>
+        <label class="ba-activity-field ba-activity-field-wide">
+          <span>Aktivitas</span>
+          <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="aktivitas" rows="3" placeholder="Topik atau kegiatan yang dibahas">${escapeHtml(a.aktivitas)}</textarea>
+        </label>
+        <label class="ba-activity-field ba-activity-field-wide">
+          <span>Hasil / Luaran</span>
+          <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="luaran" rows="3" placeholder="Hasil pembahasan atau keputusan">${escapeHtml(a.luaran)}</textarea>
+        </label>
+        <label class="ba-activity-field">
+          <span>Penanggung Jawab</span>
+          <input type="text" class="form-input ba-act-input" data-index="${idx}" data-field="pic" value="${escapeHtml(a.pic)}" placeholder="Febby, Cintia..." />
+        </label>
+        <label class="ba-activity-field ba-activity-field-notes">
+          <span>Catatan / Kendala</span>
+          <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="catatan" rows="3" placeholder="Catatan tambahan atau kendala">${escapeHtml(a.catatan)}</textarea>
+        </label>
       </div>
     `).join('');
 
@@ -3609,13 +4375,7 @@ document.addEventListener('DOMContentLoaded', () => {
       checkedNames.push(chk.value);
     });
 
-    const allMembers = [
-      { name: 'Febby', fullName: 'Febby Triana Amalia', nim: '050627749' },
-      { name: 'Cintia', fullName: 'Rohatul Cintia Nurfajar', nim: '050765966' },
-      { name: 'Anggi', fullName: 'Anggi Hermawan', nim: '051316918' },
-      { name: 'Rival', fullName: 'Rival Fauzi', nim: '051391346' },
-      { name: 'Farah', fullName: 'Farah Syahira', nim: '051417488' }
-    ];
+    const allMembers = getBeritaAcaraMembers();
 
     const attendingMembers = allMembers.filter(m => checkedNames.includes(m.name));
     const absentMembers = allMembers.filter(m => !checkedNames.includes(m.name));
@@ -3626,6 +4386,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function buildBeritaAcaraHtml() {
     const { judul, hariTanggal, waktu, lokasi, allMembers, attendingMembers, absentMembers, validActivities } = collectBeritaAcaraData();
+    const memberLine = (member, index) => `${index + 1}. ${escapeHtml([member.nim, member.fullName].filter(Boolean).join(' '))}`;
 
     return `
       <div class="ba-document-wrapper">
@@ -3672,13 +4433,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <tbody>
               <tr>
                 <td>
-                  ${allMembers.map((m, idx) => `${idx + 1}. ${m.nim} ${m.fullName}`).join('<br/>')}
+                  ${allMembers.map(memberLine).join('<br/>')}
                 </td>
                 <td>
-                  ${attendingMembers.map((m, idx) => `${idx + 1}. ${m.nim} ${m.fullName}`).join('<br/>')}
+                  ${attendingMembers.map(memberLine).join('<br/>')}
                 </td>
                 <td>
-                  ${absentMembers.length === 0 ? '<em>Semua Anggota Hadir</em>' : absentMembers.map((m, idx) => `${idx + 1}. ${m.nim} ${m.fullName}`).join('<br/>')}
+                  ${absentMembers.length === 0 ? '<em>Semua Anggota Hadir</em>' : absentMembers.map(memberLine).join('<br/>')}
                 </td>
               </tr>
             </tbody>
@@ -3749,7 +4510,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const meetingId = document.getElementById('baMeetingIdInput')?.value;
     const taskId = document.getElementById('baTaskIdInput')?.value;
-    if (meetingId && taskId) {
+    if (meetingId) {
       window.capstoneStore.markMeetingBeritaAcara(taskId, meetingId);
       document.querySelectorAll(`.delete-meeting-btn[data-meeting-id="${meetingId}"]`).forEach(btn => {
         btn.disabled = true;

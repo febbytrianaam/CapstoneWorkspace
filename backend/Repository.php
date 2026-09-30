@@ -14,10 +14,13 @@ final class Repository
     {
         $repository = new self(Database::connection());
         $repository->ensureUserActivityColumns();
+        $repository->ensureTaskArchiveColumn();
+        $repository->ensurePhaseProgressNotesTable();
         $repository->ensureUtcTimestampMigration();
         $repository->ensureRbacTable();
         $repository->ensureMeetingTaskOptional();
         $repository->ensureGuidesTable();
+        $repository->ensureDocumentArchivesTable();
         return $repository;
     }
 
@@ -125,8 +128,92 @@ final class Repository
         }
     }
 
-    public function snapshot(): array
+    public function documentArchives(): array
     {
+        $rows = $this->db->query(
+            'SELECT id, title, category, description, original_name, mime_type, file_size, uploaded_by, created_at
+             FROM document_archives ORDER BY created_at DESC, id DESC'
+        )->fetchAll();
+
+        return array_map(fn (array $row): array => [
+            'id' => $row['id'],
+            'title' => $row['title'],
+            'category' => $row['category'],
+            'description' => $row['description'] ?? '',
+            'originalName' => $row['original_name'],
+            'mimeType' => $row['mime_type'],
+            'fileSize' => (int) $row['file_size'],
+            'uploadedBy' => $row['uploaded_by'],
+            'createdAt' => strtotime($row['created_at']) * 1000,
+        ], $rows);
+    }
+
+    public function createDocumentArchive(array $data): array
+    {
+        $title = trim((string) ($data['title'] ?? ''));
+        $category = trim((string) ($data['category'] ?? 'lainnya'));
+        $description = trim((string) ($data['description'] ?? ''));
+        $originalName = trim((string) ($data['original_name'] ?? ''));
+        $mimeType = trim((string) ($data['mime_type'] ?? 'application/octet-stream'));
+        $fileData = $data['file_data'] ?? '';
+        $fileSize = (int) ($data['file_size'] ?? strlen($fileData));
+
+        if ($title === '' || $originalName === '' || $fileData === '' || $fileSize < 1) {
+            throw new InvalidArgumentException('Data dokumen arsip tidak lengkap.');
+        }
+
+        $id = 'archive-' . time() . '-' . random_int(100, 999);
+        $stmt = $this->db->prepare(
+            'INSERT INTO document_archives (id, title, category, description, original_name, mime_type, file_size, file_data, uploaded_by)
+             VALUES (:id, :title, :category, :description, :original_name, :mime_type, :file_size, :file_data, :uploaded_by)'
+        );
+        $stmt->bindValue(':id', $id);
+        $stmt->bindValue(':title', $title);
+        $stmt->bindValue(':category', $category);
+        $stmt->bindValue(':description', $description);
+        $stmt->bindValue(':original_name', $originalName);
+        $stmt->bindValue(':mime_type', $mimeType);
+        $stmt->bindValue(':file_size', $fileSize, PDO::PARAM_INT);
+        $stmt->bindValue(':file_data', $fileData, PDO::PARAM_LOB);
+        $stmt->bindValue(':uploaded_by', (string) ($data['uploaded_by'] ?? 'System'));
+        $stmt->execute();
+
+        return [
+            'id' => $id,
+            'title' => $title,
+            'category' => $category,
+            'description' => $description,
+            'originalName' => $originalName,
+            'mimeType' => $mimeType,
+            'fileSize' => $fileSize,
+            'uploadedBy' => (string) ($data['uploaded_by'] ?? 'System'),
+            'createdAt' => time() * 1000,
+        ];
+    }
+
+    public function documentArchiveFile(string $id): array
+    {
+        $stmt = $this->db->prepare('SELECT * FROM document_archives WHERE id = :id LIMIT 1');
+        $stmt->execute(['id' => $id]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            throw new RuntimeException('Dokumen arsip tidak ditemukan.');
+        }
+        return $row;
+    }
+
+    public function deleteDocumentArchive(string $id): void
+    {
+        $stmt = $this->db->prepare('DELETE FROM document_archives WHERE id = :id');
+        $stmt->execute(['id' => $id]);
+        if ($stmt->rowCount() === 0) {
+            throw new RuntimeException('Dokumen arsip tidak ditemukan.');
+        }
+    }
+
+    public function snapshot(?array $currentUser = null): array
+    {
+        $canSeeMeetings = $this->canSeeMeetings($currentUser);
         $wibNow = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
             ->setTimezone(new DateTimeZone('Asia/Jakarta'))
             ->format('d/m/Y H:i:s') . ' WIB';
@@ -134,12 +221,13 @@ final class Repository
             'timestamp' => time() * 1000,
             'dateFormatted' => $wibNow,
             'system' => 'STSI4440 Capstone Workspace MySQL',
-            'currentUser' => $this->firstSuperadmin(),
-            'users' => $this->usersById(),
-            'tasks' => $this->tasks(),
-            'meetings' => $this->generalMeetings(),
+            'currentUser' => $currentUser,
+            'users' => $this->usersVisibleTo($currentUser),
+            'tasks' => $this->tasks($canSeeMeetings),
+            'meetings' => $canSeeMeetings ? $this->generalMeetings() : [],
+            'progressNotes' => $this->phaseProgressNotes(),
             'notifications' => $this->notifications(),
-            'auditLogs' => $this->auditLogs(),
+            'auditLogs' => in_array($currentUser['role'] ?? 'member', ['superadmin', 'koordinator'], true) ? $this->auditLogs() : [],
         ];
     }
 
@@ -161,6 +249,30 @@ final class Repository
             $users[$row['id']] = $this->mapUser($row);
         }
         return $users;
+    }
+
+    private function usersVisibleTo(?array $viewer): array
+    {
+        $users = $this->usersById();
+        if (($viewer['role'] ?? 'member') !== 'member') {
+            return $users;
+        }
+
+        $visible = [];
+        foreach ($users as $id => $user) {
+            if (($user['role'] ?? 'member') === 'superadmin') {
+                continue;
+            }
+            $visible[$id] = [
+                'id' => $user['id'],
+                'name' => $user['name'],
+                'role' => $user['role'],
+                'roles' => $user['roles'],
+                'color' => $user['color'],
+                'initial' => $user['initial'],
+            ];
+        }
+        return $visible;
     }
 
     public function authenticate(string $username, string $password): ?array
@@ -210,7 +322,16 @@ final class Repository
     {
         $name = trim((string) ($data['name'] ?? 'Pengguna Baru'));
         $id = (string) ($data['id'] ?? $name);
-        $username = strtolower((string) ($data['username'] ?? preg_replace('/[^a-z0-9]+/i', '.', $id)));
+        $username = strtolower(trim((string) ($data['username'] ?? preg_replace('/[^a-z0-9]+/i', '.', $id))));
+        $fullName = trim((string) ($data['fullName'] ?? $name));
+        $nim = trim((string) ($data['nim'] ?? ''));
+        $plainPassword = (string) ($data['password'] ?? '');
+        if (strlen($plainPassword) < 8) {
+            throw new InvalidArgumentException('Password sementara minimal 8 karakter wajib diisi.');
+        }
+        if ($name === '' || $username === '') {
+            throw new InvalidArgumentException('Nama dan username wajib diisi.');
+        }
         $initial = strtoupper(substr(preg_replace('/[^a-z0-9]/i', '', $name), 0, 2)) ?: 'US';
         $stmt = $this->db->prepare(
             'INSERT INTO users (id, username, password_hash, name, full_name, nim, role, color, initial, password_changed_at)
@@ -219,10 +340,10 @@ final class Repository
         $stmt->execute([
             'id' => $id,
             'username' => $username,
-            'password_hash' => password_hash('123', PASSWORD_DEFAULT),
+            'password_hash' => password_hash($plainPassword, PASSWORD_DEFAULT),
             'name' => $name,
-            'full_name' => $data['fullName'] ?? $name,
-            'nim' => $data['nim'] ?? null,
+            'full_name' => $fullName ?: $name,
+            'nim' => $nim ?: null,
             'role' => in_array($data['role'] ?? 'member', ['superadmin', 'koordinator', 'member'], true) ? $data['role'] : 'member',
             'color' => $data['color'] ?? '#2563EB',
             'initial' => $initial,
@@ -235,15 +356,38 @@ final class Repository
         $existing = $this->userById($id);
         $merged = array_merge($existing, $data);
         $stmt = $this->db->prepare(
-            'UPDATE users SET name = :name, role = :role, color = :color, initial = :initial WHERE id = :id'
+            'UPDATE users
+             SET username = :username, name = :name, full_name = :full_name, nim = :nim,
+                 role = :role, color = :color, initial = :initial
+             WHERE id = :id'
         );
+        $name = trim((string) $merged['name']);
+        $username = strtolower(trim((string) ($merged['username'] ?? '')));
+        if ($name === '' || $username === '') {
+            throw new InvalidArgumentException('Nama dan username wajib diisi.');
+        }
         $stmt->execute([
             'id' => $id,
-            'name' => $merged['name'],
+            'username' => $username,
+            'name' => $name,
+            'full_name' => trim((string) ($merged['fullName'] ?? $merged['full_name'] ?? $name)) ?: $name,
+            'nim' => trim((string) ($merged['nim'] ?? '')) ?: null,
             'role' => in_array($merged['role'], ['superadmin', 'koordinator', 'member'], true) ? $merged['role'] : 'member',
             'color' => $merged['color'] ?? '#2563EB',
-            'initial' => strtoupper(substr(preg_replace('/[^a-z0-9]/i', '', $merged['name']), 0, 2)) ?: 'US',
+            'initial' => strtoupper(substr(preg_replace('/[^a-z0-9]/i', '', $name), 0, 2)) ?: 'US',
         ]);
+        if (isset($data['password']) && (string) $data['password'] !== '') {
+            $plainPassword = (string) $data['password'];
+            if (strlen($plainPassword) < 8) {
+                throw new InvalidArgumentException('Password baru minimal 8 karakter.');
+            }
+            $this->db->prepare(
+                'UPDATE users SET password_hash = :password_hash, password_changed_at = NOW() WHERE id = :id'
+            )->execute([
+                'id' => $id,
+                'password_hash' => password_hash($plainPassword, PASSWORD_DEFAULT),
+            ]);
+        }
         return $this->userById($id);
     }
 
@@ -253,7 +397,14 @@ final class Repository
         $stmt->execute(['id' => $id]);
     }
 
-    private function userById(string $id): array
+    public function countUsersByRole(string $role): int
+    {
+        $stmt = $this->db->prepare('SELECT COUNT(*) FROM users WHERE role = :role');
+        $stmt->execute(['role' => $role]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function userById(string $id): array
     {
         $stmt = $this->db->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
         $stmt->execute(['id' => $id]);
@@ -264,12 +415,12 @@ final class Repository
         return $this->mapUser($row);
     }
 
-    public function tasks(): array
+    public function tasks(bool $includeMeetings = true): array
     {
         $tasks = $this->db->query('SELECT * FROM tasks ORDER BY id')->fetchAll();
         $result = [];
         foreach ($tasks as $task) {
-            $result[] = $this->mapTask($task);
+            $result[] = $this->mapTask($task, $includeMeetings);
         }
         return $result;
     }
@@ -304,7 +455,7 @@ final class Repository
 
         $stmt = $this->db->prepare(
             'UPDATE tasks
-             SET phase = :phase, title = :title, pic = :pic, status = :status, priority = :priority, description = :description
+             SET phase = :phase, title = :title, pic = :pic, status = :status, priority = :priority, description = :description, archived_at = :archived_at
              WHERE id = :id'
         );
         $stmt->execute([
@@ -315,6 +466,7 @@ final class Repository
             'status' => $merged['status'],
             'priority' => $merged['priority'],
             'description' => $merged['description'] ?? '',
+            'archived_at' => $this->normalizeNullableDateTime($merged['archivedAt'] ?? null),
         ]);
 
         if (array_key_exists('checklist', $data) || array_key_exists('checklistDone', $data)) {
@@ -426,6 +578,43 @@ final class Repository
         return $this->meetingById($id);
     }
 
+    public function phaseProgressNotes(): array
+    {
+        $rows = $this->db->query('SELECT * FROM phase_progress_notes ORDER BY phase')->fetchAll();
+        $notes = [];
+        foreach ($rows as $row) {
+            $notes[$row['phase']] = $this->mapPhaseProgressNote($row);
+        }
+        return $notes;
+    }
+
+    public function savePhaseProgressNote(string $phase, string $content, string $updatedBy): array
+    {
+        if (!in_array($phase, ['tugas1', 'tugas2', 'tugas3'], true)) {
+            throw new InvalidArgumentException('Tahap catatan progress tidak valid.');
+        }
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO phase_progress_notes (phase, content, updated_by)
+             VALUES (:phase, :content, :updated_by)
+             ON DUPLICATE KEY UPDATE content = VALUES(content), updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP'
+        );
+        $stmt->execute([
+            'phase' => $phase,
+            'content' => $content,
+            'updated_by' => $updatedBy,
+        ]);
+        $this->logAudit('Ubah Catatan Progress', 'Memperbarui catatan progress ' . strtoupper($phase));
+
+        $rowStmt = $this->db->prepare('SELECT * FROM phase_progress_notes WHERE phase = :phase LIMIT 1');
+        $rowStmt->execute(['phase' => $phase]);
+        $row = $rowStmt->fetch();
+        if (!$row) {
+            throw new RuntimeException('Catatan progress tidak ditemukan.');
+        }
+        return $this->mapPhaseProgressNote($row);
+    }
+
     public function notifications(): array
     {
         $rows = $this->db->query('SELECT * FROM notifications ORDER BY occurred_at DESC')->fetchAll();
@@ -489,6 +678,8 @@ final class Repository
         $timestamp = isset($data['timestamp']) ? date('Y-m-d H:i:s', (int) ($data['timestamp'] / 1000)) : date('Y-m-d H:i:s');
         $object = $data['object'] ?? [];
         $changes = $data['changes'] ?? [];
+        $sessionName = (string) ($_SESSION['capstone_user_name'] ?? 'System');
+        $sessionRole = (string) ($_SESSION['capstone_user_role'] ?? 'system');
 
         $stmt = $this->db->prepare(
             'INSERT INTO audit_logs
@@ -499,8 +690,8 @@ final class Repository
         $stmt->execute([
             'id' => $id,
             'occurred_at' => $timestamp,
-            'user_name' => $data['user'] ?? 'System',
-            'role' => $data['role'] ?? 'member',
+            'user_name' => $sessionName,
+            'role' => $sessionRole,
             'action' => $data['action'] ?? 'Aktivitas',
             'action_tag' => $data['actionTag'] ?? strtolower(str_replace(' ', '_', $data['action'] ?? 'aktivitas')),
             'object_type' => $object['type'] ?? null,
@@ -512,7 +703,7 @@ final class Repository
             'device' => $data['device'] ?? ($_SERVER['HTTP_USER_AGENT'] ?? 'Browser'),
         ]);
 
-        return $data + ['id' => $id];
+        return $data + ['id' => $id, 'user' => $sessionName, 'role' => $sessionRole];
     }
 
     public function clearAuditLogs(): void
@@ -520,7 +711,7 @@ final class Repository
         $this->db->exec('DELETE FROM audit_logs');
     }
 
-    private function taskById(string $id): array
+    public function taskById(string $id): array
     {
         $stmt = $this->db->prepare('SELECT * FROM tasks WHERE id = :id');
         $stmt->execute(['id' => $id]);
@@ -547,15 +738,18 @@ final class Repository
         return $row;
     }
 
-    private function mapTask(array $row): array
+    private function mapTask(array $row, bool $includeMeetings = true): array
     {
         $checklistStmt = $this->db->prepare('SELECT * FROM task_checklist_items WHERE task_id = :task_id ORDER BY item_order, id');
         $checklistStmt->execute(['task_id' => $row['id']]);
         $items = $checklistStmt->fetchAll();
 
-        $meetingStmt = $this->db->prepare('SELECT * FROM meetings WHERE task_id = :task_id AND deleted_at IS NULL ORDER BY starts_at, id');
-        $meetingStmt->execute(['task_id' => $row['id']]);
-        $meetings = array_map(fn (array $meeting): array => $this->mapMeeting($meeting), $meetingStmt->fetchAll());
+        $meetings = [];
+        if ($includeMeetings) {
+            $meetingStmt = $this->db->prepare('SELECT * FROM meetings WHERE task_id = :task_id AND deleted_at IS NULL ORDER BY starts_at, id');
+            $meetingStmt->execute(['task_id' => $row['id']]);
+            $meetings = array_map(fn (array $meeting): array => $this->mapMeeting($meeting), $meetingStmt->fetchAll());
+        }
 
         return [
             'id' => $row['id'],
@@ -568,7 +762,15 @@ final class Repository
             'checklist' => array_column($items, 'text'),
             'checklistDone' => array_map(fn (array $item): bool => (bool) $item['is_done'], $items),
             'meetings' => $meetings,
+            'createdAt' => $this->timestampToMilliseconds($row['created_at'] ?? null),
+            'updatedAt' => $this->timestampToMilliseconds($row['updated_at'] ?? null),
+            'archivedAt' => $this->timestampToMilliseconds($row['archived_at'] ?? null),
         ];
+    }
+
+    private function canSeeMeetings(?array $user): bool
+    {
+        return in_array($user['role'] ?? 'member', ['superadmin', 'koordinator'], true);
     }
 
     private function mapMeeting(array $row): array
@@ -585,6 +787,17 @@ final class Repository
             'host' => $row['host'] ?? '',
             'hasBeritaAcara' => $row['berita_acara_at'] !== null,
             'deletedAt' => $row['deleted_at'] ?? null,
+        ];
+    }
+
+    private function mapPhaseProgressNote(array $row): array
+    {
+        return [
+            'phase' => $row['phase'],
+            'content' => $row['content'] ?? '',
+            'updatedBy' => $row['updated_by'] ?? '',
+            'createdAt' => $this->timestampToMilliseconds($row['created_at'] ?? null),
+            'updatedAt' => $this->timestampToMilliseconds($row['updated_at'] ?? null),
         ];
     }
 
@@ -617,12 +830,6 @@ final class Repository
             'lastLoginDevice' => $row['last_login_device'] ?? '',
             'passwordChangedAt' => $row['password_changed_at'] ? strtotime($row['password_changed_at']) * 1000 : null,
         ];
-    }
-
-    private function firstSuperadmin(): ?array
-    {
-        $row = $this->db->query('SELECT * FROM users ORDER BY role = "superadmin" DESC, name LIMIT 1')->fetch();
-        return $row ? $this->mapUser($row) : null;
     }
 
     private function replaceChecklist(string $taskId, array $items, array $doneFlags): void
@@ -674,8 +881,8 @@ final class Repository
         );
         $stmt->execute([
             'id' => 'a-' . time() . random_int(100, 999),
-            'user_name' => $_SERVER['HTTP_X_USER'] ?? 'System',
-            'role' => $_SERVER['HTTP_X_ROLE'] ?? 'system',
+            'user_name' => $_SESSION['capstone_user_name'] ?? 'System',
+            'role' => $_SESSION['capstone_user_role'] ?? 'system',
             'action' => $action,
             'action_tag' => strtolower(str_replace(' ', '_', $action)),
             'details' => $details,
@@ -692,12 +899,33 @@ final class Repository
         return str_replace('T', ' ', $value) . (strlen($value) === 16 ? ':00' : '');
     }
 
+    private function normalizeNullableDateTime(mixed $value): ?string
+    {
+        if ($value === null || $value === '' || $value === false) {
+            return null;
+        }
+        if (is_numeric($value)) {
+            return gmdate('Y-m-d H:i:s', (int) (((float) $value) / 1000));
+        }
+        $timestamp = strtotime((string) $value);
+        return $timestamp ? gmdate('Y-m-d H:i:s', $timestamp) : null;
+    }
+
     private function formatLocalDateTime(?string $value): string
     {
         if (!$value) {
             return '';
         }
         return date('Y-m-d\TH:i', strtotime($value));
+    }
+
+    private function timestampToMilliseconds(?string $value): ?int
+    {
+        if (!$value) {
+            return null;
+        }
+        $timestamp = strtotime($value . ' UTC');
+        return $timestamp ? $timestamp * 1000 : null;
     }
 
     private function ensureRbacTable(): void
@@ -728,6 +956,29 @@ final class Repository
             $this->db->exec('ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL AFTER last_login_device');
         }
         $this->db->exec('UPDATE users SET password_changed_at = COALESCE(password_changed_at, created_at, NOW()) WHERE password_changed_at IS NULL');
+    }
+
+    private function ensureTaskArchiveColumn(): void
+    {
+        $columns = $this->db->query('SHOW COLUMNS FROM tasks')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('archived_at', $columns, true)) {
+            $this->db->exec('ALTER TABLE tasks ADD COLUMN archived_at DATETIME NULL AFTER description');
+            $this->db->exec('ALTER TABLE tasks ADD INDEX idx_tasks_archived_at (archived_at)');
+        }
+    }
+
+    private function ensurePhaseProgressNotesTable(): void
+    {
+        $this->db->exec(
+            'CREATE TABLE IF NOT EXISTS phase_progress_notes (
+                phase ENUM("tugas1", "tugas2", "tugas3") PRIMARY KEY,
+                content MEDIUMTEXT NOT NULL,
+                updated_by VARCHAR(120) NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_phase_progress_notes_updated_at (updated_at)
+            ) ENGINE=InnoDB'
+        );
     }
 
     private function ensureUtcTimestampMigration(): void
@@ -800,6 +1051,27 @@ final class Repository
         $this->db->exec(
             "UPDATE project_guides SET uploaded_by = 'System'
              WHERE uploaded_by IN ('Superadmin', 'Koordinator')"
+        );
+    }
+
+    private function ensureDocumentArchivesTable(): void
+    {
+        $this->db->exec(
+            'CREATE TABLE IF NOT EXISTS document_archives (
+                id VARCHAR(80) PRIMARY KEY,
+                title VARCHAR(180) NOT NULL,
+                category VARCHAR(60) NOT NULL DEFAULT "lainnya",
+                description TEXT NULL,
+                original_name VARCHAR(255) NOT NULL,
+                mime_type VARCHAR(120) NOT NULL,
+                file_size INT UNSIGNED NOT NULL,
+                file_data MEDIUMBLOB NOT NULL,
+                uploaded_by VARCHAR(120) NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_document_archives_category (category),
+                INDEX idx_document_archives_created (created_at)
+            ) ENGINE=InnoDB'
         );
     }
 

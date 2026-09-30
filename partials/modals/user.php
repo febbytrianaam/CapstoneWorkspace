@@ -9,8 +9,31 @@
       <input type="hidden" id="userIdInput" />
       <div class="modal-body">
         <div class="form-group">
-          <label class="form-label">Nama Lengkap Pengguna</label>
-          <input type="text" id="userNameInput" class="form-input" required placeholder="Contoh: Budi Prasetyo" />
+          <label class="form-label">Nama Tampilan</label>
+          <input type="text" id="userNameInput" class="form-input" required placeholder="Contoh: Febby" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Nama Lengkap</label>
+          <input type="text" id="userFullNameInput" class="form-input" required placeholder="Contoh: Febby Triana Amalia" />
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Username Login</label>
+            <input type="text" id="userUsernameInput" class="form-input" required autocomplete="username" placeholder="Contoh: febby" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">NIM</label>
+            <input type="text" id="userNimInput" class="form-input" placeholder="Contoh: 050000000" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Password Sementara</label>
+          <input type="password" id="userPasswordInput" class="form-input" minlength="8" autocomplete="new-password" placeholder="Minimal 8 karakter" />
+          <small class="form-help">Wajib untuk pengguna baru. Kosongkan saat edit jika tidak ingin reset password.</small>
         </div>
 
         <div class="form-group">

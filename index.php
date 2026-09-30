@@ -4,22 +4,12 @@ header('Pragma: no-cache');
 header('Expires: 0');
 ?>
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" class="auth-pending">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ruang Kerja Capstone — Universitas Terbuka</title>
-  <link rel="stylesheet" href="css/style.css?v=20260927-15" />
-  <script>
-    // Tentukan state autentikasi sebelum paint pertama agar login tidak berkedip saat refresh.
-    try {
-      if (JSON.parse(localStorage.getItem('capstone_auth_v1') || 'null')?.id) {
-        document.documentElement.classList.add('has-auth-session');
-      }
-    } catch (error) {
-      localStorage.removeItem('capstone_auth_v1');
-    }
-  </script>
+  <link rel="stylesheet" href="css/style.css?v=20260930-login-sync-1" />
 </head>
 <body>
 
@@ -37,6 +27,7 @@ header('Expires: 0');
       <?php require __DIR__ . '/partials/pages/users.php'; ?>
       <?php require __DIR__ . '/partials/pages/audit.php'; ?>
       <?php require __DIR__ . '/partials/pages/rbac.php'; ?>
+      <?php require __DIR__ . '/partials/pages/documents.php'; ?>
       <?php require __DIR__ . '/partials/pages/flow.php'; ?>
     </main>
   </div>
@@ -51,11 +42,14 @@ header('Expires: 0');
 
 <script>
   window.CAPSTONE_API_BASE = 'backend/api/index.php';
+  window.setTimeout(() => {
+    document.documentElement.classList.remove('auth-pending');
+  }, 3000);
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="js/rbac.js?v=20260927-9"></script>
-  <script src="js/data.js?v=20260927-19"></script>
-  <script src="js/app.js?v=20260927-46"></script>
+  <script src="js/rbac.js?v=20260930-login-sync-1"></script>
+  <script src="js/data.js?v=20260930-login-sync-1"></script>
+  <script src="js/app.js?v=20260930-login-sync-1"></script>
 </body>
 </html>

@@ -42,7 +42,7 @@
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
             <label class="form-label" style="margin-bottom: 0;">Daftar Aktivitas & Hasil Pembahasan</label>
             <button type="button" id="addBaActivityBtn" class="btn btn-secondary" style="padding: 0.25rem 0.65rem; font-size: 0.775rem;">
-              ➕ Tambah Baris Aktivitas
+              + Tambah Aktivitas
             </button>
           </div>
           <div id="baActivitiesContainer"></div>

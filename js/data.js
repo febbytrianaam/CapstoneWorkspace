@@ -10,15 +10,16 @@ const USERS_LIST_KEY = 'capstone_users_list_v3';
 const NOTIFS_KEY = 'capstone_notifications_v3';
 const AUDIT_LOGS_KEY = 'capstone_audit_logs_v3';
 const MEETINGS_KEY = 'capstone_general_meetings_v1';
+const PROGRESS_NOTES_KEY = 'capstone_progress_notes_v1';
 const API_BASE = window.CAPSTONE_API_BASE || 'backend/api/index.php';
 
-// Dataset Pengguna Awal (Febby adalah Superadmin!)
+// Fallback offline non-sensitif. Data asli selalu diambil dari backend setelah login.
 const DEFAULT_USERS = {
   'Febby': {
     id: 'Febby',
     name: 'Febby',
-    fullName: 'Febby Triana Amalia',
-    nim: '050627749',
+    fullName: 'Superadmin Capstone',
+    nim: '',
     role: 'superadmin',
     color: '#1E40AF',
     initial: 'FB',
@@ -27,8 +28,8 @@ const DEFAULT_USERS = {
   'Cintia': {
     id: 'Cintia',
     name: 'Cintia',
-    fullName: 'Rohatul Cintia Nurfajar',
-    nim: '050765966',
+    fullName: 'Anggota Tim 1',
+    nim: '',
     role: 'member',
     color: '#7C3AED',
     initial: 'CT',
@@ -37,8 +38,8 @@ const DEFAULT_USERS = {
   'Rival': {
     id: 'Rival',
     name: 'Rival',
-    fullName: 'Rival Fauzi',
-    nim: '051391346',
+    fullName: 'Anggota Tim 2',
+    nim: '',
     role: 'member',
     color: '#059669',
     initial: 'RV',
@@ -47,8 +48,8 @@ const DEFAULT_USERS = {
   'Farah': {
     id: 'Farah',
     name: 'Farah',
-    fullName: 'Farah Syahira',
-    nim: '051417488',
+    fullName: 'Anggota Tim 3',
+    nim: '',
     role: 'member',
     color: '#DB2777',
     initial: 'FR',
@@ -57,8 +58,8 @@ const DEFAULT_USERS = {
   'Anggi': {
     id: 'Anggi',
     name: 'Anggi',
-    fullName: 'Anggi Hermawan',
-    nim: '051316918',
+    fullName: 'Anggota Tim 4',
+    nim: '',
     role: 'member',
     color: '#EA580C',
     initial: 'AG',
@@ -530,6 +531,7 @@ class DataStore {
     this.notifications = this.loadNotifications();
     this.auditLogs = this.loadAuditLogs();
     this.meetings = this.loadGeneralMeetings();
+    this.progressNotes = this.loadProgressNotes();
     this.currentUser = this.loadUser();
     // Database menjadi sumber utama; localStorage hanya cache/fallback saat backend tidak tersedia.
     this.ready = this.syncFromBackend();
@@ -540,12 +542,16 @@ class DataStore {
 
     try {
       const response = await fetch(`${API_BASE}?resource=snapshot`, {
+        credentials: 'same-origin',
         headers: {
-          Accept: 'application/json',
-          'X-Role': this.currentUser?.role || 'member',
-          'X-User-Id': this.currentUser?.id || ''
+          Accept: 'application/json'
         }
       });
+      if (response.status === 401) {
+        this.clearAuthenticatedUser();
+        window.dispatchEvent(new CustomEvent('capstone:auth-required'));
+        return;
+      }
       if (!response.ok) return;
 
       const payload = await response.json();
@@ -557,18 +563,17 @@ class DataStore {
       this.notifications = snapshot.notifications || this.notifications;
       this.auditLogs = snapshot.auditLogs || this.auditLogs;
       this.meetings = Array.isArray(snapshot.meetings) ? snapshot.meetings : this.meetings;
+      this.progressNotes = snapshot.progressNotes || this.progressNotes;
 
-      const savedId = localStorage.getItem(USER_KEY);
-      this.currentUser = savedId && this.users[savedId]
-        ? this.users[savedId]
-        : (snapshot.currentUser || Object.values(this.users)[0]);
+      this.currentUser = snapshot.currentUser || null;
 
       this.save();
       this.saveUsers();
       this.saveNotifications();
       this.saveAuditLogs();
       this.saveMeetings();
-      if (this.currentUser) localStorage.setItem(USER_KEY, this.currentUser.id);
+      this.saveProgressNotes();
+      if (this.currentUser) this.setAuthenticatedUser(this.currentUser);
 
       window.dispatchEvent(new CustomEvent('capstone:data-synced'));
     } catch (e) {
@@ -583,16 +588,18 @@ class DataStore {
     try {
       const response = await fetch(`${API_BASE}?${search.toString()}`, {
         method,
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'X-Role': this.currentUser?.role || 'member',
-          'X-User': this.currentUser?.name || 'System',
-          'X-User-Id': this.currentUser?.id || ''
+          Accept: 'application/json'
         },
         body: body ? JSON.stringify(body) : null
       });
       const payload = await response.json().catch(() => null);
+      if (response.status === 401) {
+        this.clearAuthenticatedUser();
+        window.dispatchEvent(new CustomEvent('capstone:auth-required'));
+      }
       if (!response.ok) {
         console.error(`Backend ${method} ${resource} gagal:`, payload?.message || response.statusText);
       }
@@ -607,10 +614,9 @@ class DataStore {
     if (window.location.protocol === 'file:') return [];
     try {
       const response = await fetch(`${API_BASE}?resource=guides`, {
+        credentials: 'same-origin',
         headers: {
-          Accept: 'application/json',
-          'X-Role': this.currentUser?.role || 'member',
-          'X-User-Id': this.currentUser?.id || ''
+          Accept: 'application/json'
         }
       });
       if (!response.ok) return [];
@@ -630,10 +636,9 @@ class DataStore {
     try {
       const response = await fetch(`${API_BASE}?resource=guides`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
-          Accept: 'application/json',
-          'X-Role': this.currentUser?.role || 'member',
-          'X-User-Id': this.currentUser?.id || ''
+          Accept: 'application/json'
         },
         body: formData
       });
@@ -648,6 +653,51 @@ class DataStore {
     return this.sendToBackend('guides', 'DELETE', null, { id });
   }
 
+  async getDocumentArchives() {
+    if (window.location.protocol === 'file:') return [];
+    try {
+      const response = await fetch(`${API_BASE}?resource=document-archives`, {
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json'
+        }
+      });
+      if (!response.ok) return [];
+      const payload = await response.json();
+      return Array.isArray(payload?.data) ? payload.data : [];
+    } catch (e) {
+      console.info('Daftar arsip dokumen belum tersedia.', e);
+      return [];
+    }
+  }
+
+  async uploadDocumentArchive({ title, category, description, file }) {
+    if (window.location.protocol === 'file:' || !file) return null;
+    const formData = new FormData();
+    formData.append('title', title);
+    formData.append('category', category);
+    formData.append('description', description || '');
+    formData.append('file', file);
+    try {
+      const response = await fetch(`${API_BASE}?resource=document-archives`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json'
+        },
+        body: formData
+      });
+      return response.ok ? response.json() : null;
+    } catch (e) {
+      console.info('Upload arsip dokumen gagal.', e);
+      return null;
+    }
+  }
+
+  async deleteDocumentArchive(id) {
+    return this.sendToBackend('document-archives', 'DELETE', null, { id });
+  }
+
   async changePassword(currentPassword, newPassword) {
     if (window.location.protocol === 'file:') return null;
 
@@ -655,12 +705,10 @@ class DataStore {
     try {
       const response = await fetch(`${API_BASE}?${search.toString()}`, {
         method: 'PUT',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'X-Role': this.currentUser?.role || 'member',
-          'X-User': this.currentUser?.name || 'System',
-          'X-User-Id': this.currentUser?.id || ''
+          Accept: 'application/json'
         },
         body: JSON.stringify({
           action: 'change_password',
@@ -669,6 +717,10 @@ class DataStore {
         })
       });
       const payload = await response.json().catch(() => null);
+      if (response.status === 401) {
+        this.clearAuthenticatedUser();
+        window.dispatchEvent(new CustomEvent('capstone:auth-required'));
+      }
       if (!response.ok) {
         return {
           ok: false,
@@ -828,7 +880,10 @@ class DataStore {
     const initial = name.slice(0, 2).toUpperCase();
     const newUser = {
       id,
+      username: userData.username || name.toLowerCase().replace(/[^a-z0-9]+/g, '.'),
       name,
+      fullName: userData.fullName || name,
+      nim: userData.nim || '',
       role: userData.role || 'member',
       color: userData.color || '#2563EB',
       initial,
@@ -839,17 +894,18 @@ class DataStore {
     this.addNotification(this.currentUser?.name || 'System', `menambahkan pengguna baru "${name}"`);
     const addedRoleLabel = userData.role === 'superadmin' ? 'Superadmin' : userData.role === 'koordinator' ? 'Koordinator' : 'Member';
     this.logAudit('Tambah Pengguna', `Menambahkan pengguna baru "${name}" dengan peran ${addedRoleLabel}`);
-    this.sendToBackend('users', 'POST', newUser);
+    this.sendToBackend('users', 'POST', { ...newUser, password: userData.password || '' });
     return newUser;
   }
 
   updateUser(id, updatedData) {
     if (this.users[id]) {
-      this.users[id] = { ...this.users[id], ...updatedData };
+      const { password, ...safeUpdatedData } = updatedData;
+      this.users[id] = { ...this.users[id], ...safeUpdatedData };
       this.saveUsers();
-        const updatedRoleLabel = updatedData.role === 'superadmin' ? 'Superadmin' : updatedData.role === 'koordinator' ? 'Koordinator' : 'Member';
+        const updatedRoleLabel = safeUpdatedData.role === 'superadmin' ? 'Superadmin' : safeUpdatedData.role === 'koordinator' ? 'Koordinator' : 'Member';
         this.logAudit('Ubah Pengguna', `Mengubah profil data pengguna "${id}" (${updatedRoleLabel})`);
-        this.sendToBackend('users', 'PUT', this.users[id], { id });
+        this.sendToBackend('users', 'PUT', { ...this.users[id], ...(password ? { password } : {}) }, { id });
       return this.users[id];
     }
     return null;
@@ -867,13 +923,26 @@ class DataStore {
   }
 
   loadUser() {
-    const savedId = localStorage.getItem(USER_KEY);
-    if (savedId && this.users[savedId]) {
-      this.updateLastLogin(savedId);
-      return this.users[savedId];
+    if (window.location.protocol === 'file:') {
+      const savedId = localStorage.getItem(USER_KEY);
+      if (savedId && this.users[savedId]) {
+        this.updateLastLogin(savedId);
+        return this.users[savedId];
+      }
+      this.updateLastLogin('Febby');
+      return this.users['Febby'] || Object.values(this.users)[0];
     }
-    this.updateLastLogin('Febby');
-    return this.users['Febby'] || Object.values(this.users)[0];
+
+    try {
+      const savedUser = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null');
+      if (savedUser?.id) {
+        this.users[savedUser.id] = { ...(this.users[savedUser.id] || {}), ...savedUser };
+        return this.users[savedUser.id];
+      }
+    } catch (e) {
+      localStorage.removeItem(AUTH_KEY);
+    }
+    return null;
   }
 
   setCurrentUser(userId) {
@@ -894,6 +963,27 @@ class DataStore {
     localStorage.setItem(USER_KEY, user.id);
     localStorage.setItem(AUTH_KEY, JSON.stringify(user));
     return this.currentUser;
+  }
+
+  clearAuthenticatedUser() {
+    this.currentUser = null;
+    localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(AUTH_KEY);
+  }
+
+  async logout() {
+    if (window.location.protocol !== 'file:') {
+      try {
+        await fetch(`${API_BASE}?resource=auth`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        });
+      } catch (e) {
+        console.info('Logout server gagal, membersihkan sesi lokal.', e);
+      }
+    }
+    this.clearAuthenticatedUser();
   }
 
   updateLastLogin(userId) {
@@ -948,6 +1038,49 @@ class DataStore {
     return this.meetings;
   }
 
+  loadProgressNotes() {
+    const raw = localStorage.getItem(PROGRESS_NOTES_KEY);
+    if (!raw) return {};
+    try {
+      const notes = JSON.parse(raw);
+      return notes && typeof notes === 'object' && !Array.isArray(notes) ? notes : {};
+    } catch (e) {
+      console.error('Gagal membaca catatan progress dari cache lokal:', e);
+      return {};
+    }
+  }
+
+  saveProgressNotes() {
+    localStorage.setItem(PROGRESS_NOTES_KEY, JSON.stringify(this.progressNotes));
+  }
+
+  getProgressNote(phase) {
+    return this.progressNotes?.[phase] || { phase, content: '', updatedBy: '', createdAt: null, updatedAt: null };
+  }
+
+  saveProgressNote(phase, content) {
+    const previous = this.getProgressNote(phase);
+    const note = {
+      ...previous,
+      phase,
+      content,
+      updatedBy: this.currentUser?.name || previous.updatedBy || 'System',
+      createdAt: previous.createdAt || Date.now(),
+      updatedAt: Date.now()
+    };
+    this.progressNotes = { ...(this.progressNotes || {}), [phase]: note };
+    this.saveProgressNotes();
+    this.logAudit('Ubah Catatan Progress', `Memperbarui catatan progress ${phase.toUpperCase()}`);
+    this.sendToBackend('progress-notes', 'PUT', { phase, content }, { phase }).then(payload => {
+      if (payload?.ok && payload.data) {
+        this.progressNotes = { ...(this.progressNotes || {}), [phase]: payload.data };
+        this.saveProgressNotes();
+        window.dispatchEvent(new CustomEvent('capstone:data-synced'));
+      }
+    });
+    return note;
+  }
+
   saveDefault() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_TASKS));
   }
@@ -958,11 +1091,13 @@ class DataStore {
     this.notifications = JSON.parse(JSON.stringify(DEFAULT_NOTIFICATIONS));
     this.auditLogs = JSON.parse(JSON.stringify(DEFAULT_AUDIT_LOGS));
     this.meetings = [];
+    this.progressNotes = {};
     this.save();
     this.saveUsers();
     this.saveNotifications();
     this.saveAuditLogs();
     this.saveMeetings();
+    this.saveProgressNotes();
     return this.tasks;
   }
 
@@ -979,9 +1114,12 @@ class DataStore {
   }
 
   add(taskData) {
+    const now = Date.now();
     const newTask = {
       id: 't-' + Date.now(),
       ...taskData,
+      createdAt: taskData.createdAt || now,
+      updatedAt: taskData.updatedAt || now,
       checklistDone: taskData.checklist ? taskData.checklist.map(() => false) : []
     };
     this.tasks.push(newTask);
@@ -996,7 +1134,7 @@ class DataStore {
     const index = this.tasks.findIndex(t => t.id === id);
     if (index !== -1) {
       const oldStatus = this.tasks[index].status;
-      this.tasks[index] = { ...this.tasks[index], ...updatedData };
+      this.tasks[index] = { ...this.tasks[index], ...updatedData, updatedAt: Date.now() };
       this.save();
       
       if (updatedData.status && updatedData.status !== oldStatus) {
@@ -1167,7 +1305,8 @@ class DataStore {
       tasks: this.tasks,
       notifications: this.notifications,
       auditLogs: this.auditLogs,
-      meetings: this.meetings
+      meetings: this.meetings,
+      progressNotes: this.progressNotes
     };
     return JSON.stringify(snapshot, null, 2);
   }

@@ -8,6 +8,13 @@
     <form id="taskForm">
       <input type="hidden" id="taskIdInput" />
       <div class="modal-body">
+        <div id="taskReadonlyNotice" class="task-readonly-notice" hidden>
+          <strong>Mode lihat saja</strong>
+          <span>Status dan checklist hanya bisa diubah oleh PIC tugas ini.</span>
+        </div>
+
+        <div id="taskTimestampMeta" class="task-timestamp-meta" hidden></div>
+
         <div class="form-group">
           <label class="form-label">Judul Tugas</label>
           <input type="text" id="taskTitleInput" class="form-input" required placeholder="Contoh: Lengkapi analisis proses persediaan obat" />
@@ -68,6 +75,7 @@
 
       <div class="modal-footer">
         <button type="button" id="deleteTaskBtn" class="btn btn-danger" style="display:none;">Hapus Tugas</button>
+        <button type="button" id="archiveTaskBtn" class="btn btn-secondary" style="display:none;">Arsipkan Tugas</button>
         <div style="margin-left: auto; display: flex; gap: 0.75rem;">
           <button type="button" id="modalCancelBtn" class="btn btn-secondary">Batal</button>
           <button type="submit" class="btn btn-primary">Simpan Tugas</button>
