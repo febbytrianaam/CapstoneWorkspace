@@ -2,15 +2,15 @@
       <section id="audit" class="page-view">
         <div class="phase-banner">
           <div>
-            <h2>Rekam Jejak Audit System (Audit Trail)</h2>
-            <div class="phase-banner-desc">Catatan riwayat seluruh riwayat aktivitas, pembuatan tugas, perubahan status, centang checklist, dan manipulasi pengguna secara kronologis.</div>
+            <h2>Rekam Jejak Aktivitas</h2>
+            <div class="phase-banner-desc">Catatan perubahan tugas, pertemuan, dokumen, dan data pengguna secara kronologis.</div>
           </div>
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <button id="viewSnapshotBtn" class="btn btn-primary">📸 Snapshot JSON Prototipe</button>
+            <button id="viewSnapshotBtn" class="btn btn-primary">📸 Cadangan Data JSON</button>
             <button id="exportCsvBtn" class="btn btn-secondary" title="Unduh Log sebagai File CSV / Excel">📥 Export CSV</button>
             <button id="exportJsonBtn" class="btn btn-secondary" title="Unduh Log sebagai File JSON">📄 Export JSON</button>
             <button id="printAuditBtn" class="btn btn-secondary" title="Cetak atau Simpan ke PDF">🖨️ Cetak / PDF</button>
-            <button id="resetAuditBtn" class="btn btn-secondary">Isi Ulang Data Dummy</button>
+            <button id="resetAuditBtn" class="btn btn-secondary" style="display:none;">Isi Ulang Data Audit</button>
             <button id="clearAuditBtn" class="btn btn-danger">Bersihkan Log Audit</button>
           </div>
         </div>
@@ -54,7 +54,7 @@
         <div class="card-box">
           <div class="card-box-header">
             <div>
-              <h2>Log Riwayat Aktivitas System</h2>
+              <h2>Log Riwayat Aktivitas</h2>
               <div class="card-box-subtitle">Diurutkan berdasarkan waktu aktivitas terbaru</div>
             </div>
             <span id="auditCountBadge" class="column-count">0 aktivitas</span>

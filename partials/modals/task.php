@@ -62,6 +62,51 @@
           </div>
         </div>
 
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Mulai Dikerjakan</label>
+            <input type="datetime-local" id="taskStartAtInput" class="form-input" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Batas Waktu</label>
+            <input type="datetime-local" id="taskDueAtInput" class="form-input" />
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label">Reviewer</label>
+            <select id="taskReviewerSelect" class="form-select">
+              <option value="">Belum ditentukan</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Link Luaran</label>
+            <input type="url" id="taskDeliverableUrlInput" class="form-input" placeholder="https://..." />
+          </div>
+        </div>
+
+        <div class="task-review-panel">
+          <div class="task-review-panel-header">
+            <div>
+              <div class="task-review-label">Status Review</div>
+              <div id="taskReviewStatusText" class="task-review-status-text">Belum diajukan</div>
+            </div>
+            <div id="taskReviewMeta" class="task-review-meta"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Catatan Review</label>
+            <textarea id="taskReviewNoteInput" class="form-textarea task-review-note-input" rows="3" placeholder="Catatan untuk hasil review atau revisi."></textarea>
+          </div>
+          <div class="task-review-actions">
+            <button type="button" id="submitReviewBtn" class="btn btn-secondary">Ajukan Review</button>
+            <button type="button" id="requestRevisionBtn" class="btn btn-secondary">Minta Revisi</button>
+            <button type="button" id="approveTaskBtn" class="btn btn-primary">Setujui Tugas</button>
+          </div>
+        </div>
+
         <div class="form-group">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;">
             <label class="form-label" style="margin-bottom: 0;">Daftar Sub-tugas (Checklist)</label>

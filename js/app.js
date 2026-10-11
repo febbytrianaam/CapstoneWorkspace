@@ -46,6 +46,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let modalChecklistState = [];
   let modalTaskCanUpdateProgress = false;
   let modalTaskCanManageStructure = false;
+  let modalTaskCanSubmitReview = false;
+  let modalTaskCanReview = false;
   let baActivitiesState = [];
   let baSheetSelection = null;
   let baUploadedImages = [];
@@ -697,7 +699,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setDisplay('.add-task-btn', canTaskCreate);
     setDisplay('#dashAddMeetingBtn, .add-meeting-page-btn, #addMeetingBtn', canMeetingCreate);
     setDisplay('#addUserBtn', window.RBAC.can(user, 'users', 'create'));
-    setDisplay('#resetAuditBtn, #clearAuditBtn', window.RBAC.can(user, 'audit', 'manage'));
+    setDisplay('#clearAuditBtn', window.RBAC.can(user, 'audit', 'manage'));
     setDisplay('#inlineResetAuditBtn', window.RBAC.can(user, 'audit', 'manage'));
     setDisplay('#viewSnapshotBtn, #exportCsvBtn, #exportJsonBtn, #printAuditBtn, #copyJsonBtn, #downloadJsonBtn', canAuditRead);
     setDisplay('.generate-ba-btn', canBeritaCreate);
@@ -895,6 +897,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function canManageTaskStructure(task, user = window.capstoneStore.getCurrentUser()) {
     return Boolean(task && window.RBAC.can(user, 'tasks', 'update') && user?.role !== 'member');
+  }
+
+  function canSubmitTaskReview(task, user = window.capstoneStore.getCurrentUser()) {
+    if (!task || task.archivedAt || !window.RBAC.can(user, 'tasks', 'update')) return false;
+    return user?.role !== 'member' || isTaskPic(task, user);
+  }
+
+  function canReviewTask(task, user = window.capstoneStore.getCurrentUser()) {
+    if (!task || task.archivedAt || !window.RBAC.can(user, 'tasks', 'update')) return false;
+    if (['superadmin', 'koordinator'].includes(user?.role)) return true;
+    return Boolean(task.reviewer && task.reviewer === user?.name && task.pic !== user?.name);
   }
 
   function canShowMeetings(user = window.capstoneStore.getCurrentUser()) {
@@ -1392,22 +1405,28 @@ document.addEventListener('DOMContentLoaded', () => {
         personalList.innerHTML = myTasks.map(t => {
           const totalChecklist = t.checklist ? t.checklist.length : 0;
           const doneChecklist = t.checklistDone ? t.checklistDone.filter(Boolean).length : 0;
+          const reviewMeta = getReviewStatusMeta(t.reviewStatus);
+          const deadlineMeta = getTaskDeadlineMeta(t);
           return `
-            <div class="attention-item" data-task-id="${t.id}">
-              <div class="card-header-row" style="margin-bottom: 0.35rem;">
-                <div class="attention-item-title">${escapeHtml(t.title)}</div>
+            <button class="personal-task-card" data-task-id="${t.id}" title="Klik untuk melihat detail ${escapeHtml(t.title)}">
+              <div class="personal-task-card-top">
+                <div class="personal-task-title">${escapeHtml(t.title)}</div>
                 <span class="priority-badge ${t.priority}">${t.priority}</span>
               </div>
-              <div class="attention-meta">
-                <span class="column-count" style="font-size: 0.7rem;">${t.status}</span>
-                <span style="color: var(--text-muted);">${PHASE_META[t.phase]?.short || ''}</span>
-                ${totalChecklist > 0 ? `<span style="margin-left: auto; color: var(--text-muted);">☑️ ${doneChecklist}/${totalChecklist}</span>` : ''}
+              <div class="personal-task-meta">
+                <span class="column-count">${t.status}</span>
+                <span>${PHASE_META[t.phase]?.short || ''}</span>
+                ${totalChecklist > 0 ? `<span>${doneChecklist}/${totalChecklist} sub</span>` : ''}
               </div>
-            </div>
+              <div class="personal-task-footer">
+                ${t.reviewer ? `<span class="task-review-badge is-${reviewMeta.tone}">${reviewMeta.label}</span>` : ''}
+                ${deadlineMeta ? `<span class="personal-deadline is-${deadlineMeta.tone}">${escapeHtml(deadlineMeta.label)}</span>` : ''}
+              </div>
+            </button>
           `;
         }).join('');
 
-        personalList.querySelectorAll('.attention-item').forEach(btn => {
+        personalList.querySelectorAll('.personal-task-card').forEach(btn => {
           btn.addEventListener('click', () => {
             const task = window.capstoneStore.getById(btn.dataset.taskId);
             if (canReadTaskDetails(task, currentUser)) openEditTaskModal(btn.dataset.taskId);
@@ -1422,9 +1441,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (statsContainer) {
       if (isMember) {
         const myTasks = tasks.filter(t => t.pic === currentUser.name);
-        const myDone = myTasks.filter(t => t.status === 'Selesai').length;
+        const myDone = myTasks.filter(isTaskCompletionVerified).length;
         const myProgress = myTasks.filter(t => t.status === 'Sedang Dikerjakan').length;
         const myHold = myTasks.filter(t => t.status === 'Ditunda').length;
+        const myReview = myTasks.filter(t => t.reviewStatus === 'submitted').length;
 
         statsContainer.innerHTML = `
           <div class="stat-card">
@@ -1447,16 +1467,17 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <div class="stat-card">
             <div class="stat-accent-bar" style="background: var(--status-done)"></div>
-            <div class="stat-label">Tugasku Selesai</div>
-            <div class="stat-value" style="color: var(--status-done)">${myDone}</div>
-            <div class="stat-desc">Selesai diverifikasi</div>
+            <div class="stat-label">${myReview ? 'Menunggu Review' : 'Tugasku Selesai'}</div>
+            <div class="stat-value" style="color: var(--status-done)">${myReview || myDone}</div>
+            <div class="stat-desc">${myReview ? `${myReview} tugas sedang diperiksa` : 'Selesai diverifikasi'}</div>
           </div>
         `;
       } else {
         const total = tasks.length;
-        const done = tasks.filter(t => t.status === 'Selesai').length;
+        const done = tasks.filter(isTaskCompletionVerified).length;
         const inProgress = tasks.filter(t => t.status === 'Sedang Dikerjakan').length;
         const onHold = tasks.filter(t => t.status === 'Ditunda').length;
+        const awaitingReview = tasks.filter(t => t.reviewStatus === 'submitted').length;
 
         statsContainer.innerHTML = `
           <div class="stat-card">
@@ -1479,9 +1500,9 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <div class="stat-card">
             <div class="stat-accent-bar" style="background: var(--status-done)"></div>
-            <div class="stat-label">Selesai</div>
+            <div class="stat-label">${awaitingReview ? 'Selesai Terverifikasi' : 'Selesai'}</div>
             <div class="stat-value" style="color: var(--status-done)">${done}</div>
-            <div class="stat-desc">Telah selesai diverifikasi</div>
+            <div class="stat-desc">${awaitingReview ? `${awaitingReview} menunggu review` : 'Telah selesai diverifikasi'}</div>
           </div>
         `;
       }
@@ -1491,7 +1512,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (phaseProgressContainer) {
       phaseProgressContainer.innerHTML = Object.keys(PHASE_META).map(phaseKey => {
         const phaseTasks = tasks.filter(t => t.phase === phaseKey);
-        const phaseDone = phaseTasks.filter(t => t.status === 'Selesai').length;
+        const phaseDone = phaseTasks.filter(isTaskCompletionVerified).length;
         const pct = phaseTasks.length ? Math.round((phaseDone / phaseTasks.length) * 100) : 0;
         return `
           <div class="phase-progress-item" data-phase="${phaseKey}" style="cursor: pointer;" title="Klik untuk membuka ${PHASE_META[phaseKey].short}">
@@ -1513,7 +1534,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const attentionContainer = document.getElementById('attentionList');
     if (attentionContainer) {
-      const attentionTasks = tasks.filter(t => t.priority === 'Tinggi' && t.status !== 'Selesai').slice(0, 6);
+      const attentionTasks = tasks
+        .filter(t => t.reviewStatus === 'submitted' || getTaskDeadlineMeta(t)?.tone === 'danger' || (t.priority === 'Tinggi' && !isTaskCompletionVerified(t)))
+        .slice(0, 6);
       if (attentionTasks.length === 0) {
         attentionContainer.innerHTML = `<div class="card-box-subtitle" style="padding: 1rem 0;">Tidak ada tugas prioritas tinggi yang membutuhkan penanganan mendesak.</div>`;
       } else {
@@ -1528,6 +1551,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   <span class="pic-mini-avatar" style="background: ${u.color}">${u.initial}</span> ${t.pic}
                 </span>
                 <span style="color: var(--text-muted); font-size: 0.725rem;">• ${PHASE_META[t.phase]?.short || ''}</span>
+                ${t.reviewStatus === 'submitted' ? '<span class="task-review-badge is-warning">Menunggu review</span>' : ''}
               </div>
             </button>
           `;
@@ -1549,8 +1573,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const workloadUsers = getUsersVisibleToViewer(users, currentUser);
       workloadContainer.innerHTML = workloadUsers.map(u => {
         const memTasks = tasks.filter(t => t.pic === u.name);
-        const activeCount = memTasks.filter(t => t.status !== 'Selesai').length;
-        const doneCount = memTasks.filter(t => t.status === 'Selesai').length;
+        const activeCount = memTasks.filter(t => !isTaskCompletionVerified(t)).length;
+        const doneCount = memTasks.filter(isTaskCompletionVerified).length;
 
         const isCurrentActive = currentUser.name === u.name;
         const workloadRoleLabel = getRoleLabel(u);
@@ -1583,7 +1607,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusContainer = document.getElementById('statusChartContainer');
     if (statusContainer) {
       const counts = {
-        'Selesai': tasks.filter(t => t.status === 'Selesai').length,
+        'Selesai': tasks.filter(isTaskCompletionVerified).length,
         'Sedang Dikerjakan': tasks.filter(t => t.status === 'Sedang Dikerjakan').length,
         'Belum Dimulai': tasks.filter(t => t.status === 'Belum Dimulai').length,
         'Ditunda': tasks.filter(t => t.status === 'Ditunda').length
@@ -1669,7 +1693,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const phaseData = phaseKeys.map(pk => {
         const meta = PHASE_META[pk];
         const pTasks = tasks.filter(t => t.phase === pk);
-        const done = pTasks.filter(t => t.status === 'Selesai').length;
+        const done = pTasks.filter(isTaskCompletionVerified).length;
         const total = pTasks.length;
         const pct = total ? Math.round((done / total) * 100) : 0;
         return { short: meta.short, label: meta.label, done, total, pct };
@@ -1880,6 +1904,44 @@ document.addEventListener('DOMContentLoaded', () => {
   function formatTaskUpdatedAt(task) {
     const value = task?.updatedAt || task?.createdAt;
     return value ? formatWibDateTime(value) : '-';
+  }
+
+  function toDateTimeLocalValue(value) {
+    if (!value) return '';
+    const parts = getWibDateParts(value);
+    if (!parts) return '';
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hours}:${parts.minutes}`;
+  }
+
+  function getReviewStatusMeta(status = 'none') {
+    const map = {
+      none: { label: 'Belum diajukan', tone: 'neutral' },
+      submitted: { label: 'Menunggu review', tone: 'warning' },
+      revision_requested: { label: 'Perlu revisi', tone: 'danger' },
+      approved: { label: 'Disetujui', tone: 'success' }
+    };
+    return map[status] || map.none;
+  }
+
+  function isTaskCompletionVerified(task) {
+    if (!task || task.status !== 'Selesai') return false;
+    return !task.reviewer || ['none', 'approved'].includes(task.reviewStatus || 'none');
+  }
+
+  function getTaskDeadlineMeta(task) {
+    if (!task?.dueAt || task.archivedAt || isTaskCompletionVerified(task)) return null;
+    const dueAt = parseWibDate(task.dueAt);
+    if (!dueAt) return null;
+    const diffMs = dueAt.getTime() - Date.now();
+    const absDays = Math.max(0, Math.ceil(Math.abs(diffMs) / 86400000));
+    if (diffMs < 0) {
+      return { tone: 'danger', label: absDays <= 1 ? 'Lewat hari ini' : `Lewat ${absDays} hari`, date: formatWibDateTime(task.dueAt) };
+    }
+    if (diffMs <= 3 * 86400000) {
+      const dayLabel = absDays <= 1 ? 'hari ini' : `${absDays} hari lagi`;
+      return { tone: 'warning', label: `Jatuh tempo ${dayLabel}`, date: formatWibDateTime(task.dueAt) };
+    }
+    return { tone: 'neutral', label: formatWibDateOnly(task.dueAt), date: formatWibDateTime(task.dueAt) };
   }
 
   function formatWibDateOnly(value) {
@@ -2379,6 +2441,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const updatedAtLabel = formatTaskUpdatedAt(t);
     const showMeetingTag = canShowMeetings(currentUser);
     const isArchived = Boolean(t.archivedAt);
+    const reviewMeta = getReviewStatusMeta(t.reviewStatus);
+    const deadlineMeta = getTaskDeadlineMeta(t);
 
     return `
       <div class="task-card ${isReadonlyProgress ? 'is-readonly-progress' : ''} ${isArchived ? 'is-archived' : ''}" draggable="${canUpdate && !isArchived ? 'true' : 'false'}" data-task-id="${t.id}" style="${isMine ? 'border-color: var(--ut-blue-primary);' : ''}">
@@ -2388,10 +2452,22 @@ document.addEventListener('DOMContentLoaded', () => {
           <div style="display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap; justify-content:flex-end;">
             ${isArchived ? '<span class="task-archive-badge">Arsip</span>' : ''}
             ${isReadonlyProgress ? '<span class="task-readonly-badge">Hanya lihat</span>' : ''}
+            ${t.reviewer ? `<span class="task-review-badge is-${reviewMeta.tone}">${reviewMeta.label}</span>` : ''}
             <span class="priority-badge ${t.priority}">${t.priority}</span>
           </div>
         </div>
         <div class="card-description">${escapeHtml(t.description || '')}</div>
+        ${deadlineMeta ? `
+          <div class="task-deadline-badge is-${deadlineMeta.tone}" title="${escapeHtml(deadlineMeta.date)}">
+            <span>Batas waktu</span>
+            <strong>${escapeHtml(deadlineMeta.label)}</strong>
+          </div>
+        ` : ''}
+        ${t.deliverableUrl ? `
+          <a class="task-deliverable-link" href="${escapeHtml(t.deliverableUrl)}" target="_blank" rel="noopener noreferrer">
+            Buka luaran
+          </a>
+        ` : ''}
         <div class="task-card-meta">
           <span>Update</span>
           <strong>${escapeHtml(updatedAtLabel)}</strong>
@@ -2801,7 +2877,7 @@ document.addEventListener('DOMContentLoaded', () => {
       container.innerHTML = `
         <div class="card-box-subtitle" style="padding: 2rem 0; text-align: center;">
           <p style="margin-bottom: 0.75rem;">Tidak ada rekam jejak audit yang sesuai dengan filter.</p>
-          <button id="inlineResetAuditBtn" class="btn btn-secondary">Isi Ulang Data Dummy Audit</button>
+          <button id="inlineResetAuditBtn" class="btn btn-secondary">Pulihkan Data Riwayat</button>
         </div>
       `;
       const inlineResetBtn = document.getElementById('inlineResetAuditBtn');
@@ -3218,6 +3294,9 @@ document.addEventListener('DOMContentLoaded', () => {
       card.addEventListener('click', () => {
         if (canReadTaskDetails(task, currentUser)) openEditTaskModal(card.dataset.taskId);
       });
+      card.querySelectorAll('a').forEach(link => {
+        link.addEventListener('click', event => event.stopPropagation());
+      });
     });
 
     columns.forEach(col => {
@@ -3237,6 +3316,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetStatus = col.dataset.status;
         const task = window.capstoneStore.getById(taskId);
         if (!canUpdateTaskProgress(task, currentUser) || task?.archivedAt) return;
+        if (targetStatus === 'Selesai' && task?.reviewer && task.reviewStatus !== 'approved') {
+          Swal.fire({
+            icon: 'info',
+            title: 'Perlu review dulu',
+            text: 'Tugas ini punya reviewer. Ajukan review dan tunggu persetujuan sebelum dipindah ke Selesai.',
+            confirmButtonColor: '#1E40AF'
+          });
+          return;
+        }
 
         if (taskId && targetStatus) {
           window.capstoneStore.update(taskId, { status: targetStatus });
@@ -3356,14 +3444,20 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    document.getElementById('submitReviewBtn')?.addEventListener('click', () => submitTaskReviewAction('submit'));
+    document.getElementById('requestRevisionBtn')?.addEventListener('click', () => submitTaskReviewAction('request_revision'));
+    document.getElementById('approveTaskBtn')?.addEventListener('click', () => submitTaskReviewAction('approve'));
+
     // Modal Pertemuan Standalone Listeners
     bindMeetingModalListeners(document.getElementById('meetingModalBackdrop'));
   }
 
-  function setTaskModalAccess({ canUpdateProgress, canManageStructure, canDelete, canSubmit, canArchive = false, archiveLabel = 'Arsipkan Tugas', readonlyMessage = 'Status dan checklist hanya bisa diubah oleh PIC tugas ini.' }) {
+  function setTaskModalAccess({ canUpdateProgress, canManageStructure, canDelete, canSubmit, canSubmitReview = false, canReview = false, canArchive = false, archiveLabel = 'Arsipkan Tugas', readonlyMessage = 'Status dan checklist hanya bisa diubah oleh PIC tugas ini.' }) {
     modalTaskCanUpdateProgress = Boolean(canUpdateProgress);
     modalTaskCanManageStructure = Boolean(canManageStructure);
-    const isReadonlyMode = !modalTaskCanUpdateProgress && !modalTaskCanManageStructure;
+    modalTaskCanSubmitReview = Boolean(canSubmitReview);
+    modalTaskCanReview = Boolean(canReview);
+    const isReadonlyMode = !modalTaskCanUpdateProgress && !modalTaskCanManageStructure && !modalTaskCanReview;
 
     const taskForm = document.getElementById('taskForm');
     taskForm?.classList.toggle('task-readonly-mode', isReadonlyMode);
@@ -3377,13 +3471,19 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    ['taskTitleInput', 'taskDescInput', 'taskPhaseSelect', 'taskPicSelect', 'taskPrioritySelect'].forEach(id => {
+    ['taskTitleInput', 'taskDescInput', 'taskPhaseSelect', 'taskPicSelect', 'taskPrioritySelect', 'taskStartAtInput', 'taskDueAtInput', 'taskReviewerSelect'].forEach(id => {
       const field = document.getElementById(id);
       if (field) field.disabled = !modalTaskCanManageStructure;
     });
 
     const statusSelect = document.getElementById('taskStatusSelect');
     if (statusSelect) statusSelect.disabled = !modalTaskCanUpdateProgress;
+
+    const deliverableInput = document.getElementById('taskDeliverableUrlInput');
+    if (deliverableInput) deliverableInput.disabled = !(modalTaskCanUpdateProgress || modalTaskCanManageStructure);
+
+    const reviewNoteInput = document.getElementById('taskReviewNoteInput');
+    if (reviewNoteInput) reviewNoteInput.disabled = !(modalTaskCanReview || modalTaskCanManageStructure || modalTaskCanSubmitReview);
 
     const addChecklistItemBtn = document.getElementById('addChecklistItemBtn');
     if (addChecklistItemBtn) {
@@ -3415,6 +3515,15 @@ document.addEventListener('DOMContentLoaded', () => {
       submitBtn.style.display = canSubmit ? 'inline-flex' : 'none';
       submitBtn.textContent = modalTaskCanManageStructure ? 'Simpan Tugas' : 'Simpan Progress';
     }
+
+    const submitReviewBtn = document.getElementById('submitReviewBtn');
+    if (submitReviewBtn) submitReviewBtn.style.display = modalTaskCanSubmitReview ? 'inline-flex' : 'none';
+
+    const requestRevisionBtn = document.getElementById('requestRevisionBtn');
+    if (requestRevisionBtn) requestRevisionBtn.style.display = modalTaskCanReview ? 'inline-flex' : 'none';
+
+    const approveTaskBtn = document.getElementById('approveTaskBtn');
+    if (approveTaskBtn) approveTaskBtn.style.display = modalTaskCanReview ? 'inline-flex' : 'none';
   }
 
   function ensureMeetingModal() {
@@ -3612,7 +3721,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function openEditMeetingModal(meetingId, taskId) {
     if (!window.RBAC.can(window.capstoneStore.getCurrentUser(), 'meetings', 'update')) return;
-    console.log('Edit meeting clicked:', { meetingId, taskId });
     const backdrop = ensureMeetingModal();
     const form = document.getElementById('meetingForm');
     if (!backdrop || !form) {
@@ -3744,6 +3852,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('taskPhaseSelect').value = defaultPhase;
     document.getElementById('taskStatusSelect').value = 'Belum Dimulai';
     document.getElementById('taskPrioritySelect').value = 'Sedang';
+    document.getElementById('taskStartAtInput').value = '';
+    document.getElementById('taskDueAtInput').value = '';
+    document.getElementById('taskDeliverableUrlInput').value = '';
+    document.getElementById('taskReviewNoteInput').value = '';
+    updateTaskReviewPanel({
+      reviewStatus: 'none',
+      reviewer: '',
+      submittedAt: null,
+      reviewedAt: null
+    });
     const timestampMeta = document.getElementById('taskTimestampMeta');
     if (timestampMeta) {
       timestampMeta.hidden = true;
@@ -3751,12 +3869,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     populatePicOptions(currentUser.role === 'member' ? currentUser.name : 'Febby');
+    populateReviewerOptions('');
     
     setTaskModalAccess({
       canUpdateProgress: true,
       canManageStructure: true,
       canDelete: false,
-      canSubmit: true
+      canSubmit: true,
+      canSubmitReview: false,
+      canReview: false
     });
     modalChecklistState = [];
     renderModalChecklistBuilder();
@@ -3788,9 +3909,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('taskPhaseSelect').value = task.phase;
     
     populatePicOptions(task.pic);
+    populateReviewerOptions(task.reviewer || '');
 
     document.getElementById('taskStatusSelect').value = task.status;
     document.getElementById('taskPrioritySelect').value = task.priority;
+    document.getElementById('taskStartAtInput').value = toDateTimeLocalValue(task.startAt);
+    document.getElementById('taskDueAtInput').value = toDateTimeLocalValue(task.dueAt);
+    document.getElementById('taskDeliverableUrlInput').value = task.deliverableUrl || '';
+    document.getElementById('taskReviewNoteInput').value = task.reviewNote || '';
+    updateTaskReviewPanel(task);
     const timestampMeta = document.getElementById('taskTimestampMeta');
     if (timestampMeta) {
       timestampMeta.hidden = false;
@@ -3811,6 +3938,8 @@ document.addEventListener('DOMContentLoaded', () => {
       canManageStructure,
       canDelete: canManageStructure && window.RBAC.can(currentUser, 'tasks', 'delete'),
       canSubmit: canUpdateProgress || canManageStructure,
+      canSubmitReview: Boolean(task.reviewer) && canSubmitTaskReview(task, currentUser) && !['submitted', 'approved'].includes(task.reviewStatus || 'none'),
+      canReview: canReviewTask(task, currentUser) && task.reviewStatus === 'submitted',
       canArchive,
       archiveLabel,
       readonlyMessage: isArchived
@@ -3836,6 +3965,8 @@ document.addEventListener('DOMContentLoaded', () => {
       canManageStructure,
       canDelete: canManageStructure && window.RBAC.can(currentUser, 'tasks', 'delete'),
       canSubmit: canUpdateProgress || canManageStructure,
+      canSubmitReview: Boolean(task.reviewer) && canSubmitTaskReview(task, currentUser) && !['submitted', 'approved'].includes(task.reviewStatus || 'none'),
+      canReview: canReviewTask(task, currentUser) && task.reviewStatus === 'submitted',
       canArchive,
       archiveLabel,
       readonlyMessage: isArchived
@@ -3904,6 +4035,49 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function submitTaskReviewAction(reviewAction) {
+    const taskId = document.getElementById('taskIdInput')?.value;
+    const task = taskId ? window.capstoneStore.getById(taskId) : null;
+    if (!task || task.archivedAt) return;
+
+    const currentUser = window.capstoneStore.getCurrentUser();
+    const canSubmit = reviewAction === 'submit' && canSubmitTaskReview(task, currentUser);
+    const canReview = ['approve', 'request_revision'].includes(reviewAction) && canReviewTask(task, currentUser);
+    if (!canSubmit && !canReview) {
+      Swal.fire({
+        icon: 'info',
+        title: 'Akses review terbatas',
+        text: 'Aksi ini hanya tersedia untuk PIC, reviewer, atau pengelola tugas.',
+        confirmButtonColor: '#1E40AF'
+      });
+      return;
+    }
+
+    const reviewNote = document.getElementById('taskReviewNoteInput')?.value.trim() || '';
+    const deliverableUrl = document.getElementById('taskDeliverableUrlInput')?.value.trim() || task.deliverableUrl || '';
+    const actionLabel = reviewAction === 'submit'
+      ? 'Tugas diajukan untuk review.'
+      : reviewAction === 'approve'
+        ? 'Tugas disetujui dan ditandai selesai.'
+        : 'Catatan revisi tersimpan untuk PIC.';
+
+    window.capstoneStore.update(taskId, {
+      reviewAction,
+      reviewNote,
+      deliverableUrl
+    });
+
+    closeTaskModal();
+    renderCurrentView();
+    Swal.fire({
+      icon: 'success',
+      title: 'Berhasil',
+      text: actionLabel,
+      timer: 1300,
+      showConfirmButton: false
+    });
+  }
+
   function saveTaskFromModal() {
     const editingTaskId = document.getElementById('taskIdInput')?.value;
     if (!requirePermission('tasks', editingTaskId ? 'update' : 'create')) return;
@@ -3934,15 +4108,32 @@ document.addEventListener('DOMContentLoaded', () => {
     const pic = document.getElementById('taskPicSelect').value;
     const status = document.getElementById('taskStatusSelect').value;
     const priority = document.getElementById('taskPrioritySelect').value;
+    const startAtRaw = document.getElementById('taskStartAtInput').value;
+    const dueAtRaw = document.getElementById('taskDueAtInput').value;
+    const startAt = startAtRaw ? parseWibDate(startAtRaw)?.getTime() : null;
+    const dueAt = dueAtRaw ? parseWibDate(dueAtRaw)?.getTime() : null;
+    const reviewer = document.getElementById('taskReviewerSelect').value;
+    const deliverableUrl = document.getElementById('taskDeliverableUrlInput').value.trim();
+    const reviewNote = document.getElementById('taskReviewNoteInput').value.trim();
 
     const validItems = modalChecklistState.filter(item => item.text.trim() !== '');
     const checklist = validItems.map(item => item.text.trim());
     const checklistDone = validItems.map(item => item.done);
     const currentUser = window.capstoneStore.getCurrentUser();
 
+    if (status === 'Selesai' && reviewer && (existingTask?.reviewStatus || 'none') !== 'approved') {
+      Swal.fire({
+        icon: 'info',
+        title: 'Perlu review dulu',
+        text: 'Tugas yang memiliki reviewer perlu diajukan dan disetujui sebelum ditandai selesai.',
+        confirmButtonColor: '#1E40AF'
+      });
+      return;
+    }
+
     if (taskId) {
       const updatePayload = currentUser?.role === 'member'
-        ? { status, checklist, checklistDone }
+        ? { status, checklist, checklistDone, deliverableUrl }
         : {
         title,
         description,
@@ -3950,6 +4141,11 @@ document.addEventListener('DOMContentLoaded', () => {
         pic,
         status,
         priority,
+        startAt,
+        dueAt,
+        reviewer,
+        deliverableUrl,
+        reviewNote,
         checklist,
         checklistDone
       };
@@ -3962,6 +4158,12 @@ document.addEventListener('DOMContentLoaded', () => {
         pic,
         status,
         priority,
+        startAt,
+        dueAt,
+        reviewer,
+        deliverableUrl,
+        reviewNote,
+        reviewStatus: 'none',
         checklist,
         checklistDone,
         meetings: []
@@ -4159,8 +4361,40 @@ document.addEventListener('DOMContentLoaded', () => {
     `).join('');
   }
 
+  function populateReviewerOptions(selectedReviewer = '') {
+    const reviewerSelect = document.getElementById('taskReviewerSelect');
+    if (!reviewerSelect) return;
+
+    const users = window.capstoneStore.getUsers();
+    const visibleUsers = getUsersVisibleToViewer(users, window.capstoneStore.getCurrentUser());
+    reviewerSelect.innerHTML = `
+      <option value="" ${selectedReviewer ? '' : 'selected'}>Belum ditentukan</option>
+      ${visibleUsers.map(u => `
+        <option value="${u.name}" ${u.name === selectedReviewer ? 'selected' : ''}>${u.name}</option>
+      `).join('')}
+    `;
+  }
+
+  function updateTaskReviewPanel(task = {}) {
+    const meta = getReviewStatusMeta(task.reviewStatus || 'none');
+    const statusText = document.getElementById('taskReviewStatusText');
+    if (statusText) {
+      statusText.textContent = meta.label;
+      statusText.className = `task-review-status-text is-${meta.tone}`;
+    }
+
+    const reviewMeta = document.getElementById('taskReviewMeta');
+    if (reviewMeta) {
+      const rows = [];
+      if (task.reviewer) rows.push(`Reviewer: ${task.reviewer}`);
+      if (task.submittedAt) rows.push(`Diajukan: ${formatWibDateTime(task.submittedAt)}`);
+      if (task.reviewedAt) rows.push(`Direview: ${formatWibDateTime(task.reviewedAt)}`);
+      reviewMeta.textContent = rows.join(' · ');
+    }
+  }
+
   /* ==========================================
-     Modal Snapshot JSON Prototipe
+     Modal Cadangan Data JSON
      ========================================== */
   function initSnapshotModalListeners() {
     const backdrop = document.getElementById('jsonSnapshotModalBackdrop');

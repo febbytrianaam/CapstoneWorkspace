@@ -31,12 +31,23 @@ CREATE TABLE IF NOT EXISTS tasks (
   status ENUM('Belum Dimulai', 'Sedang Dikerjakan', 'Ditunda', 'Selesai') NOT NULL DEFAULT 'Belum Dimulai',
   priority ENUM('Tinggi', 'Sedang', 'Rendah') NOT NULL DEFAULT 'Sedang',
   description TEXT NULL,
+  start_at DATETIME NULL,
+  due_at DATETIME NULL,
+  reviewer VARCHAR(120) NULL,
+  review_status VARCHAR(40) NOT NULL DEFAULT 'none',
+  submitted_at DATETIME NULL,
+  reviewed_at DATETIME NULL,
+  review_note TEXT NULL,
+  deliverable_url VARCHAR(500) NULL,
   archived_at DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_tasks_phase (phase),
   INDEX idx_tasks_pic (pic),
   INDEX idx_tasks_status (status),
+  INDEX idx_tasks_due_at (due_at),
+  INDEX idx_tasks_reviewer (reviewer),
+  INDEX idx_tasks_review_status (review_status),
   INDEX idx_tasks_archived_at (archived_at)
 ) ENGINE=InnoDB;
 

@@ -57,7 +57,7 @@
       </button>
       <div class="system-info">
         <div><strong>STSI4440 Capstone</strong></div>
-        <div style="color: var(--text-on-dark-muted); font-size: 0.7rem; margin-top: 2px;">Edisi Audit & Pengguna v3.2</div>
+        <div style="color: var(--text-on-dark-muted); font-size: 0.7rem; margin-top: 2px;">Ruang Kerja Tim v1.0</div>
       </div>
     </div>
   </aside>

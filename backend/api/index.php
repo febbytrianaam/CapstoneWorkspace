@@ -300,6 +300,12 @@ try {
             Response::json(['ok' => true, 'data' => $repo->tasks($includeMeetings)]);
         }
         if ($method === 'POST') {
+            $targetStatus = (string) ($input['status'] ?? '');
+            $targetReviewer = trim((string) ($input['reviewer'] ?? ''));
+            $targetReviewStatus = (string) ($input['reviewStatus'] ?? 'none');
+            if ($targetStatus === 'Selesai' && $targetReviewer !== '' && $targetReviewStatus !== 'approved') {
+                Response::error('Tugas yang memiliki reviewer perlu disetujui melalui proses review sebelum ditandai selesai.', 422);
+            }
             Response::json(['ok' => true, 'data' => $repo->createTask($input)], 201);
         }
         if ($method === 'PUT') {
@@ -308,11 +314,43 @@ try {
                 Response::error('Parameter id wajib diisi.', 422);
             }
             $task = $repo->taskById((string) $id);
+            $role = $currentUser['role'];
+            $reviewAction = (string) ($input['reviewAction'] ?? '');
+            $isManager = in_array($role, ['superadmin', 'koordinator'], true);
+            $isPic = ($task['pic'] ?? '') === $currentUser['name'];
+            $isAssignedReviewer = trim((string) ($task['reviewer'] ?? '')) !== '' && ($task['reviewer'] ?? '') === $currentUser['name'];
             if ($currentUser['role'] === 'member') {
-                if (($task['pic'] ?? '') !== $currentUser['name']) {
-                    Response::error('Member hanya dapat mengubah progres tugas miliknya sendiri.', 403);
+                if (in_array($reviewAction, ['approve', 'request_revision'], true)) {
+                    if (!$isAssignedReviewer || $isPic) {
+                        Response::error('Review hanya dapat dilakukan oleh reviewer yang ditunjuk dan bukan PIC tugas tersebut.', 403);
+                    }
+                    $input = array_intersect_key($input, array_flip(['reviewAction', 'reviewNote']));
+                } else {
+                    if (!$isPic) {
+                        Response::error('Member hanya dapat mengubah progres tugas miliknya sendiri.', 403);
+                    }
+                    if ($reviewAction !== '' && $reviewAction !== 'submit') {
+                        Response::error('Aksi review tidak valid untuk PIC tugas.', 403);
+                    }
+                    if (($input['status'] ?? '') === 'Selesai' && trim((string) ($task['reviewer'] ?? '')) !== '' && ($task['reviewStatus'] ?? 'none') !== 'approved') {
+                        Response::error('Tugas yang memiliki reviewer perlu diajukan dan disetujui sebelum ditandai selesai.', 422);
+                    }
+                    $input = array_intersect_key($input, array_flip(['status', 'checklist', 'checklistDone', 'deliverableUrl', 'reviewAction', 'reviewNote']));
                 }
-                $input = array_intersect_key($input, array_flip(['status', 'checklist', 'checklistDone']));
+            } elseif (in_array($reviewAction, ['approve', 'request_revision'], true) && !$isManager && !$isAssignedReviewer) {
+                Response::error('Anda tidak ditunjuk sebagai reviewer tugas ini.', 403);
+            }
+            if ($reviewAction === 'submit' && !$isPic && !$isManager) {
+                Response::error('Tugas hanya dapat diajukan review oleh PIC atau pengelola.', 403);
+            }
+            if ($reviewAction === 'approve' && ($task['reviewStatus'] ?? 'none') !== 'submitted') {
+                Response::error('Tugas hanya dapat disetujui setelah diajukan untuk review.', 422);
+            }
+            $targetStatus = (string) ($input['status'] ?? $task['status'] ?? '');
+            $targetReviewer = trim((string) ($input['reviewer'] ?? $task['reviewer'] ?? ''));
+            $targetReviewStatus = (string) ($input['reviewStatus'] ?? $task['reviewStatus'] ?? 'none');
+            if ($targetStatus === 'Selesai' && $targetReviewer !== '' && $reviewAction !== 'approve' && $targetReviewStatus !== 'approved') {
+                Response::error('Tugas yang memiliki reviewer perlu disetujui melalui proses review sebelum ditandai selesai.', 422);
             }
             if (array_key_exists('archivedAt', $input)) {
                 if ($currentUser['role'] !== 'superadmin') {

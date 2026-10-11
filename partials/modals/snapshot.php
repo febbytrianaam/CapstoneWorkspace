@@ -1,13 +1,13 @@
-<!-- Modal Dialog Snapshot JSON Prototipe -->
+<!-- Modal Dialog Cadangan Data JSON -->
 <div id="jsonSnapshotModalBackdrop" class="modal-backdrop">
   <div class="modal-dialog" style="max-width: 680px;">
     <div class="modal-header">
-      <h3>📸 Snapshot Data JSON Prototipe Capstone</h3>
+      <h3>📸 Cadangan Data JSON Capstone</h3>
       <button id="jsonSnapshotCloseBtn" class="modal-close-btn">&times;</button>
     </div>
     <div class="modal-body">
       <div class="card-box-subtitle" style="margin-bottom: 0.75rem;">
-        Berikut adalah snapshot struktur data JSON lengkap seluruh state prototipe (Tugas, Pengguna, Notifikasi, & Audit Trail) pada saat ini:
+        Berikut adalah salinan struktur data aplikasi saat ini, termasuk tugas, pengguna, pemberitahuan, dan riwayat aktivitas:
       </div>
       <div style="position: relative;">
         <textarea id="jsonSnapshotTextarea" class="form-textarea" rows="12" readonly style="font-family: monospace; font-size: 0.775rem; background: var(--bg-hover); color: var(--text-main); line-height: 1.4;"></textarea>

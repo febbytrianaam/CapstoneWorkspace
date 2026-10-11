@@ -15,6 +15,7 @@ final class Repository
         $repository = new self(Database::connection());
         $repository->ensureUserActivityColumns();
         $repository->ensureTaskArchiveColumn();
+        $repository->ensureTaskWorkflowColumns();
         $repository->ensurePhaseProgressNotesTable();
         $repository->ensureUtcTimestampMigration();
         $repository->ensureRbacTable();
@@ -432,9 +433,10 @@ final class Repository
     public function createTask(array $data): array
     {
         $id = $data['id'] ?? ('t-' . time());
+        $deliverableUrl = $this->normalizeNullableUrl($data['deliverableUrl'] ?? $data['deliverable_url'] ?? null);
         $stmt = $this->db->prepare(
-            'INSERT INTO tasks (id, phase, title, pic, status, priority, description)
-             VALUES (:id, :phase, :title, :pic, :status, :priority, :description)'
+            'INSERT INTO tasks (id, phase, title, pic, status, priority, description, start_at, due_at, reviewer, review_status, submitted_at, reviewed_at, review_note, deliverable_url)
+             VALUES (:id, :phase, :title, :pic, :status, :priority, :description, :start_at, :due_at, :reviewer, :review_status, :submitted_at, :reviewed_at, :review_note, :deliverable_url)'
         );
         $stmt->execute([
             'id' => $id,
@@ -444,6 +446,14 @@ final class Repository
             'status' => $data['status'] ?? 'Belum Dimulai',
             'priority' => $data['priority'] ?? 'Sedang',
             'description' => $data['description'] ?? '',
+            'start_at' => $this->normalizeNullableDateTime($data['startAt'] ?? $data['start_at'] ?? null),
+            'due_at' => $this->normalizeNullableDateTime($data['dueAt'] ?? $data['due_at'] ?? null),
+            'reviewer' => $this->normalizeNullableString($data['reviewer'] ?? null),
+            'review_status' => $this->normalizeReviewStatus($data['reviewStatus'] ?? $data['review_status'] ?? 'none'),
+            'submitted_at' => $this->normalizeNullableDateTime($data['submittedAt'] ?? $data['submitted_at'] ?? null),
+            'reviewed_at' => $this->normalizeNullableDateTime($data['reviewedAt'] ?? $data['reviewed_at'] ?? null),
+            'review_note' => $data['reviewNote'] ?? $data['review_note'] ?? '',
+            'deliverable_url' => $deliverableUrl,
         ]);
 
         $this->replaceChecklist($id, $data['checklist'] ?? [], $data['checklistDone'] ?? []);
@@ -456,10 +466,26 @@ final class Repository
     {
         $existing = $this->taskById($id);
         $merged = array_merge($existing, $data);
+        $reviewAction = (string) ($data['reviewAction'] ?? '');
+        if ($reviewAction === 'submit') {
+            $merged['reviewStatus'] = 'submitted';
+            $merged['submittedAt'] = time() * 1000;
+            $merged['reviewedAt'] = null;
+        } elseif ($reviewAction === 'request_revision') {
+            $merged['reviewStatus'] = 'revision_requested';
+            $merged['reviewedAt'] = time() * 1000;
+        } elseif ($reviewAction === 'approve') {
+            $merged['reviewStatus'] = 'approved';
+            $merged['reviewedAt'] = time() * 1000;
+            $merged['status'] = 'Selesai';
+        }
 
         $stmt = $this->db->prepare(
             'UPDATE tasks
-             SET phase = :phase, title = :title, pic = :pic, status = :status, priority = :priority, description = :description, archived_at = :archived_at
+             SET phase = :phase, title = :title, pic = :pic, status = :status, priority = :priority, description = :description,
+                 start_at = :start_at, due_at = :due_at, reviewer = :reviewer, review_status = :review_status,
+                 submitted_at = :submitted_at, reviewed_at = :reviewed_at, review_note = :review_note,
+                 deliverable_url = :deliverable_url, archived_at = :archived_at
              WHERE id = :id'
         );
         $stmt->execute([
@@ -470,6 +496,14 @@ final class Repository
             'status' => $merged['status'],
             'priority' => $merged['priority'],
             'description' => $merged['description'] ?? '',
+            'start_at' => $this->normalizeNullableDateTime($merged['startAt'] ?? null),
+            'due_at' => $this->normalizeNullableDateTime($merged['dueAt'] ?? null),
+            'reviewer' => $this->normalizeNullableString($merged['reviewer'] ?? null),
+            'review_status' => $this->normalizeReviewStatus($merged['reviewStatus'] ?? 'none'),
+            'submitted_at' => $this->normalizeNullableDateTime($merged['submittedAt'] ?? null),
+            'reviewed_at' => $this->normalizeNullableDateTime($merged['reviewedAt'] ?? null),
+            'review_note' => $merged['reviewNote'] ?? '',
+            'deliverable_url' => $this->normalizeNullableUrl($merged['deliverableUrl'] ?? null),
             'archived_at' => $this->normalizeNullableDateTime($merged['archivedAt'] ?? null),
         ]);
 
@@ -480,7 +514,13 @@ final class Repository
             $this->replaceMeetings($id, $data['meetings']);
         }
 
-        $this->logAudit('Ubah Tugas', 'Memperbarui tugas "' . $merged['title'] . '"');
+        $auditAction = match ($reviewAction) {
+            'submit' => 'Ajukan Review Tugas',
+            'request_revision' => 'Minta Revisi Tugas',
+            'approve' => 'Setujui Tugas',
+            default => 'Ubah Tugas',
+        };
+        $this->logAudit($auditAction, 'Memperbarui tugas "' . $merged['title'] . '"');
         return $this->taskById($id);
     }
 
@@ -763,6 +803,14 @@ final class Repository
             'status' => $row['status'],
             'priority' => $row['priority'],
             'description' => $row['description'] ?? '',
+            'startAt' => $this->timestampToMilliseconds($row['start_at'] ?? null),
+            'dueAt' => $this->timestampToMilliseconds($row['due_at'] ?? null),
+            'reviewer' => $row['reviewer'] ?? '',
+            'reviewStatus' => $row['review_status'] ?? 'none',
+            'submittedAt' => $this->timestampToMilliseconds($row['submitted_at'] ?? null),
+            'reviewedAt' => $this->timestampToMilliseconds($row['reviewed_at'] ?? null),
+            'reviewNote' => $row['review_note'] ?? '',
+            'deliverableUrl' => $row['deliverable_url'] ?? '',
             'checklist' => array_column($items, 'text'),
             'checklistDone' => array_map(fn (array $item): bool => (bool) $item['is_done'], $items),
             'meetings' => $meetings,
@@ -911,8 +959,41 @@ final class Repository
         if (is_numeric($value)) {
             return gmdate('Y-m-d H:i:s', (int) (((float) $value) / 1000));
         }
+        $raw = trim((string) $value);
+        if (preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?$/', $raw)) {
+            $date = new DateTimeImmutable(str_replace('T', ' ', $raw), new DateTimeZone('Asia/Jakarta'));
+            return $date->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+        }
         $timestamp = strtotime((string) $value);
         return $timestamp ? gmdate('Y-m-d H:i:s', $timestamp) : null;
+    }
+
+    private function normalizeNullableString(mixed $value): ?string
+    {
+        $text = trim((string) ($value ?? ''));
+        return $text === '' ? null : $text;
+    }
+
+    private function normalizeReviewStatus(mixed $value): string
+    {
+        $status = trim((string) ($value ?? 'none'));
+        return in_array($status, ['none', 'submitted', 'revision_requested', 'approved'], true) ? $status : 'none';
+    }
+
+    private function normalizeNullableUrl(mixed $value): ?string
+    {
+        $url = trim((string) ($value ?? ''));
+        if ($url === '') {
+            return null;
+        }
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            throw new InvalidArgumentException('Link luaran tugas tidak valid.');
+        }
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        if (!in_array($scheme, ['http', 'https'], true)) {
+            throw new InvalidArgumentException('Link luaran tugas harus diawali http:// atau https://.');
+        }
+        return $url;
     }
 
     private function formatLocalDateTime(?string $value): string
@@ -968,6 +1049,38 @@ final class Repository
         if (!in_array('archived_at', $columns, true)) {
             $this->db->exec('ALTER TABLE tasks ADD COLUMN archived_at DATETIME NULL AFTER description');
             $this->db->exec('ALTER TABLE tasks ADD INDEX idx_tasks_archived_at (archived_at)');
+        }
+    }
+
+    private function ensureTaskWorkflowColumns(): void
+    {
+        $columns = $this->db->query('SHOW COLUMNS FROM tasks')->fetchAll(PDO::FETCH_COLUMN);
+        $addColumn = function (string $name, string $definition) use (&$columns): void {
+            if (!in_array($name, $columns, true)) {
+                $this->db->exec('ALTER TABLE tasks ADD COLUMN ' . $definition);
+                $columns[] = $name;
+            }
+        };
+
+        $addColumn('start_at', 'start_at DATETIME NULL AFTER description');
+        $addColumn('due_at', 'due_at DATETIME NULL AFTER start_at');
+        $addColumn('reviewer', 'reviewer VARCHAR(120) NULL AFTER due_at');
+        $addColumn('review_status', 'review_status VARCHAR(40) NOT NULL DEFAULT "none" AFTER reviewer');
+        $addColumn('submitted_at', 'submitted_at DATETIME NULL AFTER review_status');
+        $addColumn('reviewed_at', 'reviewed_at DATETIME NULL AFTER submitted_at');
+        $addColumn('review_note', 'review_note TEXT NULL AFTER reviewed_at');
+        $addColumn('deliverable_url', 'deliverable_url VARCHAR(500) NULL AFTER review_note');
+
+        $indexes = $this->db->query('SHOW INDEX FROM tasks')->fetchAll(PDO::FETCH_ASSOC);
+        $indexNames = array_map(static fn (array $row): string => (string) $row['Key_name'], $indexes);
+        if (!in_array('idx_tasks_due_at', $indexNames, true)) {
+            $this->db->exec('ALTER TABLE tasks ADD INDEX idx_tasks_due_at (due_at)');
+        }
+        if (!in_array('idx_tasks_reviewer', $indexNames, true)) {
+            $this->db->exec('ALTER TABLE tasks ADD INDEX idx_tasks_reviewer (reviewer)');
+        }
+        if (!in_array('idx_tasks_review_status', $indexNames, true)) {
+            $this->db->exec('ALTER TABLE tasks ADD INDEX idx_tasks_review_status (review_status)');
         }
     }
 

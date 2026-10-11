@@ -67,11 +67,11 @@ const DEFAULT_USERS = {
   }
 };
 
-// Notifikasi hanya memakai data aktivitas nyata, bukan dummy prototype.
+// Notifikasi hanya memakai data aktivitas nyata.
 const DEFAULT_NOTIFICATIONS = [];
 
 // Dataset Rekam Jejak Audit Awal yang Lengkap (Audit Trail Dummy Data)
-// Simulasi IP & Device untuk prototipe frontend
+// Data awal riwayat aktivitas untuk fallback lokal
 const DUMMY_IPS = ['192.168.1.45', '10.0.0.12', '172.16.0.88', '192.168.0.101', '10.10.5.33'];
 const DUMMY_DEVICES = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128',
@@ -556,7 +556,7 @@ class DataStore {
 
       window.dispatchEvent(new CustomEvent('capstone:data-synced'));
     } catch (e) {
-      console.info('Backend belum tersedia, memakai data lokal prototype.', e);
+      console.info('Backend belum tersedia, memakai data lokal cadangan.', e);
     }
   }
 
@@ -1114,7 +1114,20 @@ class DataStore {
     const index = this.tasks.findIndex(t => t.id === id);
     if (index !== -1) {
       const oldStatus = this.tasks[index].status;
-      this.tasks[index] = { ...this.tasks[index], ...updatedData, updatedAt: Date.now() };
+      const nextData = { ...updatedData };
+      if (nextData.reviewAction === 'submit') {
+        nextData.reviewStatus = 'submitted';
+        nextData.submittedAt = Date.now();
+        nextData.reviewedAt = null;
+      } else if (nextData.reviewAction === 'request_revision') {
+        nextData.reviewStatus = 'revision_requested';
+        nextData.reviewedAt = Date.now();
+      } else if (nextData.reviewAction === 'approve') {
+        nextData.reviewStatus = 'approved';
+        nextData.reviewedAt = Date.now();
+        nextData.status = 'Selesai';
+      }
+      this.tasks[index] = { ...this.tasks[index], ...nextData, updatedAt: Date.now() };
       this.save();
       
       if (updatedData.status && updatedData.status !== oldStatus) {
