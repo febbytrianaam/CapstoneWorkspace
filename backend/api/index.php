@@ -226,6 +226,7 @@ try {
         $title = trim((string) ($_POST['title'] ?? ''));
         $category = trim((string) ($_POST['category'] ?? 'lainnya'));
         $description = trim((string) ($_POST['description'] ?? ''));
+        $meetingId = trim((string) ($_POST['meeting_id'] ?? ''));
         $file = $_FILES['file'] ?? null;
         $maxBytes = 10 * 1024 * 1024;
         $allowedCategories = ['berita_acara', 'surat_izin', 'surat_pernyataan', 'proposal_laporan', 'diagram_alur', 'lampiran', 'lainnya'];
@@ -254,6 +255,7 @@ try {
             'title' => $title,
             'category' => $category,
             'description' => $description,
+            'meeting_id' => $meetingId,
             'original_name' => basename((string) $file['name']),
             'mime_type' => $mimeType ?: 'application/octet-stream',
             'file_size' => (int) $file['size'],

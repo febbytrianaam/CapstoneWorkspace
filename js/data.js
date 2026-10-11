@@ -67,30 +67,8 @@ const DEFAULT_USERS = {
   }
 };
 
-// Dataset Pemberitahuan Notifikasi Awal
-const DEFAULT_NOTIFICATIONS = [
-  {
-    id: 'n-1',
-    user: 'Febby',
-    text: 'memperbarui status tugas "Konsultasikan judul project" menjadi Sedang Dikerjakan',
-    time: Date.now() - (1000 * 60 * 12),
-    read: false
-  },
-  {
-    id: 'n-2',
-    user: 'Rival',
-    text: 'menyelesaikan 3 sub-tugas pada "Lengkapi analisis proses persediaan obat"',
-    time: Date.now() - (1000 * 60 * 65),
-    read: false
-  },
-  {
-    id: 'n-3',
-    user: 'Cintia',
-    text: 'menambahkan struktur awal dokumen proposal Tugas 1',
-    time: Date.now() - (1000 * 60 * 180),
-    read: false
-  }
-];
+// Notifikasi hanya memakai data aktivitas nyata, bukan dummy prototype.
+const DEFAULT_NOTIFICATIONS = [];
 
 // Dataset Rekam Jejak Audit Awal yang Lengkap (Audit Trail Dummy Data)
 // Simulasi IP & Device untuk prototipe frontend
@@ -526,14 +504,15 @@ const DEFAULT_TASKS = [
 // Pengelola Data Store
 class DataStore {
   constructor() {
-    this.users = this.loadUsers();
-    this.tasks = this.loadTasks();
-    this.notifications = this.loadNotifications();
-    this.auditLogs = this.loadAuditLogs();
-    this.meetings = this.loadGeneralMeetings();
-    this.progressNotes = this.loadProgressNotes();
+    const offlineMode = window.location.protocol === 'file:';
+    this.users = offlineMode ? this.loadUsers() : {};
+    this.tasks = offlineMode ? this.loadTasks() : [];
+    this.notifications = offlineMode ? this.loadNotifications() : [];
+    this.auditLogs = offlineMode ? this.loadAuditLogs() : [];
+    this.meetings = offlineMode ? this.loadGeneralMeetings() : [];
+    this.progressNotes = offlineMode ? this.loadProgressNotes() : {};
     this.currentUser = this.loadUser();
-    // Database menjadi sumber utama; localStorage hanya cache/fallback saat backend tidak tersedia.
+    // Database menjadi sumber utama untuk aplikasi login. Fallback seed hanya aktif saat file dibuka langsung.
     this.ready = this.syncFromBackend();
   }
 
@@ -558,12 +537,12 @@ class DataStore {
       if (!payload.ok || !payload.data) return;
 
       const snapshot = payload.data;
-      this.users = snapshot.users || this.users;
-      this.tasks = snapshot.tasks || this.tasks;
-      this.notifications = snapshot.notifications || this.notifications;
-      this.auditLogs = snapshot.auditLogs || this.auditLogs;
+      this.users = snapshot.users && typeof snapshot.users === 'object' ? snapshot.users : {};
+      this.tasks = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
+      this.notifications = Array.isArray(snapshot.notifications) ? snapshot.notifications : [];
+      this.auditLogs = Array.isArray(snapshot.auditLogs) ? snapshot.auditLogs : [];
       this.meetings = Array.isArray(snapshot.meetings) ? snapshot.meetings : this.meetings;
-      this.progressNotes = snapshot.progressNotes || this.progressNotes;
+      this.progressNotes = snapshot.progressNotes && typeof snapshot.progressNotes === 'object' ? snapshot.progressNotes : {};
 
       this.currentUser = snapshot.currentUser || null;
 
@@ -671,12 +650,13 @@ class DataStore {
     }
   }
 
-  async uploadDocumentArchive({ title, category, description, file }) {
+  async uploadDocumentArchive({ title, category, description, meetingId, file }) {
     if (window.location.protocol === 'file:' || !file) return null;
     const formData = new FormData();
     formData.append('title', title);
     formData.append('category', category);
     formData.append('description', description || '');
+    if (meetingId) formData.append('meeting_id', meetingId);
     formData.append('file', file);
     try {
       const response = await fetch(`${API_BASE}?resource=document-archives`, {

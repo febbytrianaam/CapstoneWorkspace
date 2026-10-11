@@ -14,6 +14,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   const PAGE_STORAGE_KEY = 'capstone_current_page_v3';
   const PROGRESS_NOTE_COLLAPSE_KEY = 'capstone_progress_note_collapsed_v1';
+  const BERITA_ACARA_DRAFTS_KEY = 'capstone_berita_acara_drafts_v1';
   const VALID_PAGE_IDS = ['dashboard', 'tugas1', 'tugas2', 'tugas3', 'flow', 'documents', 'users', 'audit', 'rbac'];
   const DOCUMENT_ARCHIVE_CATEGORIES = {
     berita_acara: 'Berita Acara',
@@ -46,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let modalTaskCanUpdateProgress = false;
   let modalTaskCanManageStructure = false;
   let baActivitiesState = [];
+  let baSheetSelection = null;
   let baUploadedImages = [];
   let flowDocuments = [];
   let flowDocumentsLoaded = false;
@@ -699,6 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setDisplay('#inlineResetAuditBtn', window.RBAC.can(user, 'audit', 'manage'));
     setDisplay('#viewSnapshotBtn, #exportCsvBtn, #exportJsonBtn, #printAuditBtn, #copyJsonBtn, #downloadJsonBtn', canAuditRead);
     setDisplay('.generate-ba-btn', canBeritaCreate);
+    setDisplay('.upload-ba-manual-btn', window.RBAC.can(user, 'documents', 'create'), 'flex');
     setDisplay('.edit-user-btn', window.RBAC.can(user, 'users', 'update'));
     setDisplay('.delete-user-direct-btn', window.RBAC.can(user, 'users', 'delete'));
     setDisplay('#deleteUserBtn', window.RBAC.can(user, 'users', 'delete'));
@@ -709,7 +712,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setDisplay('#meetingForm button[type="submit"]', canMeetingCreate || window.RBAC.can(user, 'meetings', 'update'));
     setDisplay('#addBaActivityBtn', canBeritaCreate);
     setDisplay('#baDocImageInput', canBeritaCreate, 'block');
-    setDisplay('#baPreviewBtn', canBeritaCreate);
+    setDisplay('#baDraftSaveBtn, #baPreviewBtn', canBeritaCreate);
     setDisplay('#baPrintBtn, #baPreviewPrintBtn', window.RBAC.can(user, 'beritaAcara', 'read'));
     setDisplay('#flowDocumentsSection', window.RBAC.can(user, 'guides', 'read'), 'block');
     setDisplay('#flowDocumentForm', window.RBAC.can(user, 'guides', 'create'), 'grid');
@@ -1061,12 +1064,18 @@ document.addEventListener('DOMContentLoaded', () => {
   function initDocumentArchive() {
     const form = document.getElementById('documentArchiveForm');
     const filter = document.getElementById('documentArchiveCategoryFilter');
+    const categoryInput = document.getElementById('documentArchiveCategory');
 
     if (filter) {
       filter.addEventListener('change', event => {
         documentArchiveCategoryFilter = event.target.value || 'SEMUA';
         renderDocumentArchives();
       });
+    }
+
+    if (categoryInput) {
+      categoryInput.addEventListener('change', refreshDocumentArchiveMeetingSelect);
+      refreshDocumentArchiveMeetingSelect();
     }
 
     if (!form) return;
@@ -1076,11 +1085,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const titleInput = document.getElementById('documentArchiveTitle');
       const categoryInput = document.getElementById('documentArchiveCategory');
+      const meetingInput = document.getElementById('documentArchiveMeeting');
       const descriptionInput = document.getElementById('documentArchiveDescription');
       const fileInput = document.getElementById('documentArchiveFile');
       const button = document.getElementById('documentArchiveUploadBtn');
       const title = titleInput?.value.trim() || '';
       const category = categoryInput?.value || 'lainnya';
+      const meetingId = category === 'berita_acara' ? (meetingInput?.value || '') : '';
       const description = descriptionInput?.value.trim() || '';
       const file = fileInput?.files?.[0];
 
@@ -1099,7 +1110,7 @@ document.addEventListener('DOMContentLoaded', () => {
         button.textContent = 'Menyimpan...';
       }
 
-      const result = await window.capstoneStore.uploadDocumentArchive({ title, category, description, file });
+      const result = await window.capstoneStore.uploadDocumentArchive({ title, category, description, meetingId, file });
 
       if (button) {
         button.disabled = false;
@@ -1113,17 +1124,79 @@ document.addEventListener('DOMContentLoaded', () => {
 
       window.capstoneStore.logAudit('Upload Arsip Dokumen', `Menyimpan dokumen "${title}" ke arsip`, {
         actionTag: 'upload_document_archive',
-        object: { type: 'Arsip Dokumen', id: result.data?.id || '', name: title }
+        object: { type: 'Arsip Dokumen', id: result.data?.id || '', name: title },
+        changes: meetingId ? [{ field: 'Pertemuan Terkait', from: null, to: meetingId }] : []
       });
+      if (meetingId) {
+        const linked = findMeetingForBeritaAcara(meetingId);
+        window.capstoneStore.markMeetingBeritaAcara(linked.task?.id || '', meetingId);
+      }
       form.reset();
+      refreshDocumentArchiveMeetingSelect();
       await loadDocumentArchives(true);
       Swal.fire({ icon: 'success', title: 'Dokumen tersimpan', text: 'Dokumen sudah tersedia di arsip tim.', timer: 1600, showConfirmButton: false });
     });
   }
 
   function renderDocumentArchiveView() {
+    refreshDocumentArchiveMeetingSelect();
     renderDocumentArchives();
     loadDocumentArchives();
+  }
+
+  function getAllMeetingsForArchiveLinking() {
+    const taskMeetings = window.capstoneStore.getAll().flatMap(task =>
+      (task.meetings || []).map(meeting => ({ ...meeting, task }))
+    );
+    const generalMeetings = (window.capstoneStore.getMeetings?.() || []).map(meeting => ({ ...meeting, task: null }));
+    const seen = new Set();
+    return [...taskMeetings, ...generalMeetings]
+      .filter(meeting => {
+        if (!meeting?.id || seen.has(meeting.id)) return false;
+        seen.add(meeting.id);
+        return true;
+      })
+      .sort((a, b) => (parseWibDate(a.date)?.getTime() || 0) - (parseWibDate(b.date)?.getTime() || 0));
+  }
+
+  function refreshDocumentArchiveMeetingSelect() {
+    const categoryInput = document.getElementById('documentArchiveCategory');
+    const field = document.getElementById('documentArchiveMeetingField');
+    const select = document.getElementById('documentArchiveMeeting');
+    if (!categoryInput || !field || !select) return;
+
+    const isBeritaAcara = categoryInput.value === 'berita_acara';
+    field.style.display = isBeritaAcara ? 'block' : 'none';
+    if (!isBeritaAcara) {
+      select.value = '';
+      return;
+    }
+
+    const currentValue = select.value;
+    const meetings = getAllMeetingsForArchiveLinking();
+    select.innerHTML = `
+      <option value="">Tidak dikaitkan ke pertemuan</option>
+      ${meetings.map(meeting => {
+        const phaseLabel = meeting.phase ? meeting.phase.replace('tugas', 'Tugas ') : '';
+        const date = meeting.date ? formatWibDateOnly(meeting.date) : '-';
+        const taskLabel = meeting.task?.title ? ` - ${meeting.task.title}` : (phaseLabel ? ` - ${phaseLabel}` : '');
+        return `<option value="${escapeHtml(meeting.id)}">${escapeHtml(`${date} - ${meeting.title}${taskLabel}`)}</option>`;
+      }).join('')}
+    `;
+    if ([...select.options].some(option => option.value === currentValue)) {
+      select.value = currentValue;
+    }
+  }
+
+  function ensureDocumentArchivesLoadedForMeetingCards() {
+    const currentUser = window.capstoneStore.getCurrentUser();
+    if (!window.RBAC.can(currentUser, 'documents', 'read')) return;
+    if (documentArchivesLoaded || documentArchivesLoading) return;
+    loadDocumentArchives().then(() => {
+      if (currentPage === 'dashboard' || currentPage?.startsWith('tugas')) {
+        renderCurrentView();
+      }
+    });
   }
 
   async function loadDocumentArchives(force = false) {
@@ -1153,6 +1226,32 @@ document.addEventListener('DOMContentLoaded', () => {
     if (mime.includes('presentation') || mime.includes('powerpoint')) return '📽️';
     if (category.includes('surat')) return '✉️';
     return '📄';
+  }
+
+  function getMeetingBeritaAcaraArchive(meetingId) {
+    if (!meetingId || !Array.isArray(documentArchives)) return null;
+    return documentArchives.find(document => {
+      if (document.category !== 'berita_acara') return false;
+      if (document.meetingId === meetingId) return true;
+      return (document.description || '').includes(`ID pertemuan: ${meetingId}`);
+    }) || null;
+  }
+
+  function getDocumentArchiveMeetingId(document) {
+    if (document?.meetingId) return document.meetingId;
+    const match = (document?.description || '').match(/ID pertemuan:\s*([A-Za-z0-9_.:-]+)/);
+    return match?.[1] || '';
+  }
+
+  function getDocumentArchiveMeetingContext(document) {
+    const meetingId = getDocumentArchiveMeetingId(document);
+    if (!meetingId) return null;
+    const linked = findMeetingForBeritaAcara(meetingId);
+    return {
+      meetingId,
+      meeting: linked.meeting,
+      task: linked.task
+    };
   }
 
   function renderDocumentArchives() {
@@ -1188,6 +1287,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const id = encodeURIComponent(document.id);
       const title = escapeHtml(document.title);
       const description = (document.description || '').trim();
+      const meetingContext = getDocumentArchiveMeetingContext(document);
+      const latestMeetingArchive = meetingContext ? getMeetingBeritaAcaraArchive(meetingContext.meetingId) : null;
+      const isLatestMeetingArchive = Boolean(latestMeetingArchive && latestMeetingArchive.id === document.id);
+      const meetingLabel = meetingContext
+        ? `${meetingContext.meeting ? meetingContext.meeting.title : `Pertemuan ${meetingContext.meetingId}`}${meetingContext.task?.title ? ` - ${meetingContext.task.title}` : ''}`
+        : '';
       return `<article class="flow-document-card document-archive-card">
         <div class="flow-document-icon document-archive-icon" aria-hidden="true">${documentArchiveIcon(document)}</div>
         <div class="flow-document-content">
@@ -1195,6 +1300,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <h3>${title}</h3>
           <div class="flow-document-meta">${escapeHtml(document.originalName)} · ${formatFileSize(document.fileSize)}</div>
           <div class="flow-document-meta">Disimpan oleh ${escapeHtml(document.uploadedBy || 'System')} · ${date}</div>
+          ${meetingContext ? `<div class="flow-document-meta document-archive-meeting-meta">Pertemuan: ${escapeHtml(meetingLabel)}${isLatestMeetingArchive ? ' · Dipakai di card pertemuan' : ''}</div>` : ''}
           ${description ? `<p class="document-archive-description">${escapeHtml(description)}</p>` : ''}
         </div>
         <div class="flow-document-actions">
@@ -1593,6 +1699,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const meetingsContainer = document.getElementById('dashboardMeetingsGrid');
     const meetingCountBadge = document.getElementById('meetingCountBadge');
     const currentUser = window.capstoneStore.getCurrentUser();
+    ensureDocumentArchivesLoadedForMeetingCards();
 
     if (!meetingsContainer) return;
     if (!canShowMeetings(currentUser)) {
@@ -1631,6 +1738,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const timing = getMeetingTiming(m);
       const u = users[responsibleName] || { color: '#64748B', initial: responsibleName.slice(0, 2).toUpperCase() };
       const dateFormatted = formatMeetingDateRange(m.date, m.endDate);
+      const baArchive = getMeetingBeritaAcaraArchive(m.id);
+      const baArchiveId = baArchive ? encodeURIComponent(baArchive.id) : '';
 
       return `
         <div class="meeting-card">
@@ -1654,9 +1763,17 @@ document.addEventListener('DOMContentLoaded', () => {
               </a>
             ` : '<span style="font-size: 0.725rem; color: var(--text-muted); italic;">(Tidak ada URL)</span>'}
           </div>
-          <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
-            📄 Generate Berita Acara
+          <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" title="${m.hasBeritaAcara ? 'Buka kembali form berita acara untuk revisi atau preview.' : 'Buat berita acara dari data pertemuan.'}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+            ${m.hasBeritaAcara ? '📝 Buka Form BA' : '📝 Buat BA dari Form'}
           </button>
+          <button class="btn btn-secondary upload-ba-manual-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" title="${m.hasBeritaAcara ? 'Upload BA manual versi baru ke arsip dokumen.' : 'Upload BA manual yang sudah dibuat di luar aplikasi.'}" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+            ${m.hasBeritaAcara ? '📎 Upload File BA Baru' : '📎 Upload File BA'}
+          </button>
+          ${baArchive ? `
+            <a class="btn btn-primary meeting-ba-view-btn" href="backend/api/index.php?resource=document-archives&id=${baArchiveId}&view=1" target="_blank" rel="noopener" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+              👁️ Lihat File BA
+            </a>
+          ` : m.hasBeritaAcara ? `<div class="meeting-ba-note">BA sudah ditandai ada. File manual belum terhubung ke pertemuan ini.</div>` : ''}
           <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
             Edit Pertemuan
           </button>
@@ -1671,6 +1788,13 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         openBeritaAcaraModal(btn.dataset.meetingId, btn.dataset.taskId);
+      });
+    });
+
+    meetingsContainer.querySelectorAll('.upload-ba-manual-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        uploadManualBeritaAcara(btn.dataset.meetingId, btn.dataset.taskId);
       });
     });
 
@@ -1834,6 +1958,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (meeting) return { meeting, task };
     }
 
+    if (!taskId) {
+      for (const candidateTask of window.capstoneStore.getAll()) {
+        const meeting = (candidateTask.meetings || []).find(m => m.id === meetingId);
+        if (meeting) return { meeting, task: candidateTask };
+      }
+    }
+
     const generalMeeting = (window.capstoneStore.getMeetings?.() || []).find(m => m.id === meetingId);
     return { meeting: generalMeeting || null, task: generalMeeting?.taskId ? window.capstoneStore.getById(generalMeeting.taskId) : null };
   }
@@ -1844,6 +1975,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderPhaseView(phaseKey) {
     const pageView = document.getElementById(phaseKey);
     if (!pageView) return;
+    ensureDocumentArchivesLoadedForMeetingCards();
 
     const meta = PHASE_META[phaseKey];
     const allPhaseTasks = window.capstoneStore.getByPhase(phaseKey);
@@ -1977,6 +2109,8 @@ document.addEventListener('DOMContentLoaded', () => {
               const u = users[responsibleName] || { color: '#64748B', initial: responsibleName.slice(0, 2).toUpperCase() };
               const dateFormatted = formatMeetingDateRange(m.date, m.endDate);
               const timing = getMeetingTiming(m);
+              const baArchive = getMeetingBeritaAcaraArchive(m.id);
+              const baArchiveId = baArchive ? encodeURIComponent(baArchive.id) : '';
               return `
                 <div class="meeting-card">
                   <div class="meeting-card-header">
@@ -1999,9 +2133,17 @@ document.addEventListener('DOMContentLoaded', () => {
                       </a>
                     ` : '<span style="font-size: 0.725rem; color: var(--text-muted); italic;">(Tidak ada URL)</span>'}
                   </div>
-                  <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
-                    📄 Generate Berita Acara
+                  <button class="btn btn-secondary generate-ba-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" title="${m.hasBeritaAcara ? 'Buka kembali form berita acara untuk revisi atau preview.' : 'Buat berita acara dari data pertemuan.'}" style="margin-top: 0.5rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+                    ${m.hasBeritaAcara ? '📝 Buka Form BA' : '📝 Buat BA dari Form'}
                   </button>
+                  <button class="btn btn-secondary upload-ba-manual-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" title="${m.hasBeritaAcara ? 'Upload BA manual versi baru ke arsip dokumen.' : 'Upload BA manual yang sudah dibuat di luar aplikasi.'}" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+                    ${m.hasBeritaAcara ? '📎 Upload File BA Baru' : '📎 Upload File BA'}
+                  </button>
+                  ${baArchive ? `
+                    <a class="btn btn-primary meeting-ba-view-btn" href="backend/api/index.php?resource=document-archives&id=${baArchiveId}&view=1" target="_blank" rel="noopener" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem;">
+                      👁️ Lihat File BA
+                    </a>
+                  ` : m.hasBeritaAcara ? `<div class="meeting-ba-note">BA sudah ditandai ada. File manual belum terhubung ke pertemuan ini.</div>` : ''}
                   <button type="button" class="btn btn-secondary edit-meeting-btn" data-meeting-id="${m.id}" data-task-id="${taskId}" onclick="event.preventDefault(); event.stopPropagation(); window.capstoneEditMeeting(this.getAttribute('data-meeting-id'), this.getAttribute('data-task-id'));" style="margin-top: 0.4rem; width: 100%; font-size: 0.775rem; padding: 0.35rem 0.6rem;">
                     Edit Pertemuan
                   </button>
@@ -2020,6 +2162,13 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         openBeritaAcaraModal(btn.dataset.meetingId, btn.dataset.taskId);
+      });
+    });
+
+    pageView.querySelectorAll('.upload-ba-manual-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        uploadManualBeritaAcara(btn.dataset.meetingId, btn.dataset.taskId);
       });
     });
 
@@ -4151,14 +4300,28 @@ document.addEventListener('DOMContentLoaded', () => {
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) closeBeritaAcaraModal();
     });
+    backdrop.addEventListener('keydown', (event) => {
+      const editableTarget = event.target?.matches?.('input, textarea, select, [contenteditable="true"]');
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        event.stopPropagation();
+        if (!editableTarget && event.key === 'Backspace') {
+          event.preventDefault();
+        }
+      }
+    }, true);
 
     document.getElementById('addBaActivityBtn')?.addEventListener('click', () => {
-      baActivitiesState.push({ aktivitas: '', luaran: '', pic: 'Febby, Cintia, Rival', catatan: '' });
+      baActivitiesState.push({ aktivitas: '', luaran: '', pic: '', catatan: '' });
       renderBaActivitiesInModal();
     });
 
     document.getElementById('baDocImageInput')?.addEventListener('change', handleBaDocImageUpload);
-    document.getElementById('baPreviewBtn')?.addEventListener('click', previewBeritaAcara);
+    document.getElementById('beritaAcaraForm')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      saveBeritaAcaraDraft(true);
+    });
+    document.getElementById('baDraftSaveBtn')?.addEventListener('click', () => saveBeritaAcaraDraft(true));
+    document.getElementById('baPreviewBtn')?.addEventListener('click', openBeritaAcaraPreviewTab);
     document.getElementById('baPrintBtn')?.addEventListener('click', printBeritaAcara);
     document.getElementById('baPreviewPrintBtn')?.addEventListener('click', printBeritaAcara);
     document.getElementById('baPreviewCloseBtn')?.addEventListener('click', closeBeritaAcaraPreview);
@@ -4173,6 +4336,84 @@ document.addEventListener('DOMContentLoaded', () => {
   function closeBeritaAcaraModal() {
     const backdrop = document.getElementById('beritaAcaraModalBackdrop');
     if (backdrop) backdrop.classList.remove('active');
+  }
+
+  function getBeritaAcaraDraftKey(meetingId = '', taskId = '') {
+    return `${meetingId || 'tanpa-meeting'}::${taskId || 'tanpa-task'}`;
+  }
+
+  function loadBeritaAcaraDrafts() {
+    try {
+      const drafts = JSON.parse(localStorage.getItem(BERITA_ACARA_DRAFTS_KEY) || '{}');
+      return drafts && typeof drafts === 'object' && !Array.isArray(drafts) ? drafts : {};
+    } catch (e) {
+      localStorage.removeItem(BERITA_ACARA_DRAFTS_KEY);
+      return {};
+    }
+  }
+
+  function collectBeritaAcaraDraftPayload() {
+    const meetingId = document.getElementById('baMeetingIdInput')?.value || '';
+    const taskId = document.getElementById('baTaskIdInput')?.value || '';
+    const attendingNames = Array.from(document.querySelectorAll('.ba-att-check:checked')).map(chk => chk.value);
+    return {
+      meetingId,
+      taskId,
+      judul: document.getElementById('baJudulInput')?.value || '',
+      hariTanggal: document.getElementById('baHariTanggalInput')?.value || '',
+      waktu: document.getElementById('baWaktuInput')?.value || '',
+      lokasi: document.getElementById('baLokasiInput')?.value || '',
+      attendingNames,
+      activities: baActivitiesState.map(item => ({ ...item })),
+      images: [...baUploadedImages],
+      updatedAt: Date.now()
+    };
+  }
+
+  function saveBeritaAcaraDraft(showMessage = false) {
+    const payload = collectBeritaAcaraDraftPayload();
+    const key = getBeritaAcaraDraftKey(payload.meetingId, payload.taskId);
+    const drafts = loadBeritaAcaraDrafts();
+    drafts[key] = payload;
+    localStorage.setItem(BERITA_ACARA_DRAFTS_KEY, JSON.stringify(drafts));
+    if (showMessage && typeof Swal !== 'undefined') {
+      Swal.fire({
+        icon: 'success',
+        title: 'Draft tersimpan',
+        text: 'Berita acara sementara sudah disimpan di perangkat ini.',
+        timer: 1400,
+        showConfirmButton: false
+      });
+    }
+    return payload;
+  }
+
+  function restoreBeritaAcaraDraft(meetingId = '', taskId = '') {
+    const draft = loadBeritaAcaraDrafts()[getBeritaAcaraDraftKey(meetingId, taskId)];
+    if (!draft) return false;
+
+    const setValue = (id, value) => {
+      const element = document.getElementById(id);
+      if (element) element.value = value || '';
+    };
+
+    setValue('baJudulInput', draft.judul);
+    setValue('baHariTanggalInput', draft.hariTanggal);
+    setValue('baWaktuInput', draft.waktu);
+    setValue('baLokasiInput', draft.lokasi);
+    document.querySelectorAll('.ba-att-check').forEach(chk => {
+      chk.checked = Array.isArray(draft.attendingNames) ? draft.attendingNames.includes(chk.value) : chk.checked;
+    });
+    baActivitiesState = Array.isArray(draft.activities) && draft.activities.length
+      ? draft.activities.map(item => ({
+          aktivitas: item.aktivitas || '',
+          luaran: item.luaran || '',
+          pic: item.pic || '',
+          catatan: item.catatan || ''
+        }))
+      : baActivitiesState;
+    baUploadedImages = Array.isArray(draft.images) ? draft.images : [];
+    return true;
   }
 
   function openBeritaAcaraModal(meetingId, taskId) {
@@ -4205,9 +4446,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Lokasi
     let lokasiStr = "Daring (Microsoft Teams)";
     if (meeting && meeting.url) {
-      lokasiStr += ` ${meeting.url}`;
+      lokasiStr += `\n${meeting.url}`;
     } else {
-      lokasiStr += " https://teams.microsoft.com/meet/490619894049348?p=1eLkHLYMShE1IkWCRs";
+      lokasiStr += "\nhttps://teams.microsoft.com/meet/490619894049348?p=1eLkHLYMShE1IkWCRs";
     }
     document.getElementById('baLokasiInput').value = lokasiStr;
 
@@ -4215,6 +4456,8 @@ document.addEventListener('DOMContentLoaded', () => {
     renderBaAttendanceCheckboxes();
 
     baActivitiesState = buildDefaultBeritaAcaraActivities(meeting, task);
+    restoreBeritaAcaraDraft(meetingId || '', taskId || '');
+    ensureMinimumBaActivityRows();
     renderBaActivitiesInModal();
     renderBaImagePreviews();
     const printBtn = document.getElementById('baPrintBtn');
@@ -4272,49 +4515,79 @@ document.addEventListener('DOMContentLoaded', () => {
     ];
   }
 
+  function ensureMinimumBaActivityRows(minRows = 10) {
+    while (baActivitiesState.length < minRows) {
+      baActivitiesState.push({ aktivitas: '', luaran: '', pic: '', catatan: '' });
+    }
+  }
+
   function renderBaActivitiesInModal() {
     const container = document.getElementById('baActivitiesContainer');
     if (!container) return;
 
     if (baActivitiesState.length === 0) {
-      container.innerHTML = `<div style="font-size: 0.775rem; color: var(--text-muted); font-style: italic; padding: 0.4rem 0;">Belum ada baris aktivitas. Klik "+ Tambah Baris Aktivitas" untuk menambahkan.</div>`;
+      container.innerHTML = `<div class="ba-activity-empty">Belum ada aktivitas yang dicatat.</div>`;
       return;
     }
 
-    container.innerHTML = baActivitiesState.map((a, idx) => `
-      <div class="ba-activity-row">
-        <div class="ba-activity-head">
-          <span>Aktivitas ${idx + 1}</span>
-          <button type="button" class="ba-remove-act-btn" data-index="${idx}" title="Hapus aktivitas">&times;</button>
-        </div>
-        <label class="ba-activity-field ba-activity-field-wide">
-          <span>Aktivitas</span>
-          <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="aktivitas" rows="3" placeholder="Topik atau kegiatan yang dibahas">${escapeHtml(a.aktivitas)}</textarea>
-        </label>
-        <label class="ba-activity-field ba-activity-field-wide">
-          <span>Hasil / Luaran</span>
-          <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="luaran" rows="3" placeholder="Hasil pembahasan atau keputusan">${escapeHtml(a.luaran)}</textarea>
-        </label>
-        <label class="ba-activity-field">
-          <span>Penanggung Jawab</span>
-          <input type="text" class="form-input ba-act-input" data-index="${idx}" data-field="pic" value="${escapeHtml(a.pic)}" placeholder="Febby, Cintia..." />
-        </label>
-        <label class="ba-activity-field ba-activity-field-notes">
-          <span>Catatan / Kendala</span>
-          <textarea class="form-textarea ba-act-input" data-index="${idx}" data-field="catatan" rows="3" placeholder="Catatan tambahan atau kendala">${escapeHtml(a.catatan)}</textarea>
-        </label>
+    container.innerHTML = `
+      <div class="ba-activity-sheet-wrap">
+        <table class="ba-activity-sheet">
+          <thead>
+            <tr>
+              <th class="ba-activity-sheet-no">No</th>
+              <th>Aktivitas</th>
+              <th>Luaran</th>
+              <th>Nama Penanggung Jawab</th>
+              <th>Catatan/Kendala yang Dihadapi</th>
+              <th class="ba-activity-sheet-action"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${baActivitiesState.map((a, idx) => `
+              <tr>
+                <td class="ba-activity-sheet-no">${idx + 1}</td>
+                <td class="ba-sheet-editable" data-index="${idx}" data-field="aktivitas" data-col="0">
+                  <div class="ba-sheet-cell ba-act-input" contenteditable="true" data-index="${idx}" data-field="aktivitas" data-placeholder="Topik kegiatan">${escapeHtml(a.aktivitas)}</div>
+                </td>
+                <td class="ba-sheet-editable" data-index="${idx}" data-field="luaran" data-col="1">
+                  <div class="ba-sheet-cell ba-act-input" contenteditable="true" data-index="${idx}" data-field="luaran" data-placeholder="Hasil pembahasan">${escapeHtml(a.luaran)}</div>
+                </td>
+                <td class="ba-sheet-editable" data-index="${idx}" data-field="pic" data-col="2">
+                  <div class="ba-sheet-cell ba-act-input" contenteditable="true" data-index="${idx}" data-field="pic" data-placeholder="Febby, Cintia...">${escapeHtml(a.pic)}</div>
+                </td>
+                <td class="ba-sheet-editable" data-index="${idx}" data-field="catatan" data-col="3">
+                  <div class="ba-sheet-cell ba-act-input" contenteditable="true" data-index="${idx}" data-field="catatan" data-placeholder="Catatan tambahan">${escapeHtml(a.catatan)}</div>
+                </td>
+                <td class="ba-activity-sheet-action">
+                  <button type="button" class="ba-remove-act-btn" data-index="${idx}" title="Hapus baris">&times;</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
       </div>
-    `).join('');
+      <div class="ba-activity-sheet-note">Bisa tempel tabel dari Excel atau Google Sheets langsung ke kolom aktivitas.</div>
+    `;
 
     container.querySelectorAll('.ba-act-input').forEach(input => {
       input.addEventListener('input', (e) => {
         const idx = parseInt(e.target.dataset.index, 10);
         const field = e.target.dataset.field;
         if (baActivitiesState[idx]) {
-          baActivitiesState[idx][field] = e.target.value;
+          baActivitiesState[idx][field] = getBaEditableText(e.target);
         }
       });
+      input.addEventListener('paste', handleBaActivityPaste);
     });
+
+    container.querySelectorAll('.ba-sheet-editable').forEach(cell => {
+      cell.addEventListener('mousedown', handleBaSheetMouseDown);
+      cell.addEventListener('mouseenter', handleBaSheetMouseEnter);
+    });
+
+    container.addEventListener('keydown', handleBaSheetKeyDown);
+    document.addEventListener('mouseup', finishBaSheetSelection, { once: true });
 
     container.querySelectorAll('.ba-remove-act-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -4323,6 +4596,232 @@ document.addEventListener('DOMContentLoaded', () => {
         renderBaActivitiesInModal();
       });
     });
+  }
+
+  function getBaEditableText(element) {
+    return (element.innerText || '').replace(/\u00a0/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  function getBaSheetCellMeta(cell) {
+    return {
+      row: parseInt(cell.dataset.index, 10),
+      col: parseInt(cell.dataset.col, 10),
+      field: cell.dataset.field
+    };
+  }
+
+  function handleBaSheetMouseDown(event) {
+    const cell = event.currentTarget;
+    if (event.button !== 0 || event.detail > 1) return;
+
+    event.preventDefault();
+    const { row, col } = getBaSheetCellMeta(cell);
+    baSheetSelection = { startRow: row, startCol: col, endRow: row, endCol: col, dragging: true };
+    paintBaSheetSelection();
+
+    const editor = cell.querySelector('.ba-sheet-cell');
+    if (editor) {
+      window.setTimeout(() => {
+        editor.focus();
+        placeCaretAtEnd(editor);
+      }, 0);
+    }
+  }
+
+  function handleBaSheetMouseEnter(event) {
+    if (!baSheetSelection?.dragging) return;
+    const { row, col } = getBaSheetCellMeta(event.currentTarget);
+    baSheetSelection.endRow = row;
+    baSheetSelection.endCol = col;
+    paintBaSheetSelection();
+  }
+
+  function finishBaSheetSelection() {
+    if (baSheetSelection) baSheetSelection.dragging = false;
+  }
+
+  function getBaSheetSelectionBounds() {
+    if (!baSheetSelection) return null;
+    return {
+      minRow: Math.min(baSheetSelection.startRow, baSheetSelection.endRow),
+      maxRow: Math.max(baSheetSelection.startRow, baSheetSelection.endRow),
+      minCol: Math.min(baSheetSelection.startCol, baSheetSelection.endCol),
+      maxCol: Math.max(baSheetSelection.startCol, baSheetSelection.endCol)
+    };
+  }
+
+  function paintBaSheetSelection() {
+    const bounds = getBaSheetSelectionBounds();
+    document.querySelectorAll('.ba-sheet-editable').forEach(cell => {
+      const { row, col } = getBaSheetCellMeta(cell);
+      const selected = bounds && row >= bounds.minRow && row <= bounds.maxRow && col >= bounds.minCol && col <= bounds.maxCol;
+      cell.classList.toggle('is-selected', Boolean(selected));
+    });
+  }
+
+  function placeCaretAtEnd(element) {
+    const range = document.createRange();
+    const selection = window.getSelection();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function handleBaSheetKeyDown(event) {
+    if (!baSheetSelection) return;
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
+      const copied = copyBaSheetSelection();
+      if (copied) event.preventDefault();
+      return;
+    }
+
+    if (event.key === 'Delete') {
+      clearBaSheetSelection();
+      event.preventDefault();
+    }
+  }
+
+  function copyBaSheetSelection() {
+    const bounds = getBaSheetSelectionBounds();
+    if (!bounds) return false;
+
+    const fields = ['aktivitas', 'luaran', 'pic', 'catatan'];
+    const rows = [];
+    for (let row = bounds.minRow; row <= bounds.maxRow; row += 1) {
+      const cols = [];
+      for (let col = bounds.minCol; col <= bounds.maxCol; col += 1) {
+        cols.push(baActivitiesState[row]?.[fields[col]] || '');
+      }
+      rows.push(cols.join('\t'));
+    }
+
+    const text = rows.join('\n');
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    } else {
+      const temp = document.createElement('textarea');
+      temp.value = text;
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      temp.remove();
+    }
+    return true;
+  }
+
+  function clearBaSheetSelection() {
+    const bounds = getBaSheetSelectionBounds();
+    if (!bounds) return;
+
+    const fields = ['aktivitas', 'luaran', 'pic', 'catatan'];
+    for (let row = bounds.minRow; row <= bounds.maxRow; row += 1) {
+      if (!baActivitiesState[row]) continue;
+      for (let col = bounds.minCol; col <= bounds.maxCol; col += 1) {
+        baActivitiesState[row][fields[col]] = '';
+      }
+    }
+    renderBaActivitiesInModal();
+  }
+
+  function parseClipboardTable(text = '') {
+    const rows = [];
+    let current = '';
+    let row = [];
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i += 1) {
+      const char = text[i];
+      const next = text[i + 1];
+
+      if (char === '"' && inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+        continue;
+      }
+
+      if (char === '"') {
+        inQuotes = !inQuotes;
+        continue;
+      }
+
+      if (char === '\t' && !inQuotes) {
+        row.push(current);
+        current = '';
+        continue;
+      }
+
+      if ((char === '\n' || char === '\r') && !inQuotes) {
+        if (char === '\r' && next === '\n') i += 1;
+        row.push(current);
+        rows.push(row);
+        row = [];
+        current = '';
+        continue;
+      }
+
+      current += char;
+    }
+
+    row.push(current);
+    rows.push(row);
+
+    return rows
+      .map(cols => cols.map(col => col.trim()))
+      .filter(cols => cols.some(Boolean));
+  }
+
+  function handleBaActivityPaste(event) {
+    const text = event.clipboardData?.getData('text/plain') || '';
+    if (!text.includes('\t') && !/\r?\n/.test(text)) {
+      event.preventDefault();
+      insertPlainTextAtCaret(text);
+      window.setTimeout(() => {
+        const idx = parseInt(event.target.dataset.index, 10);
+        const field = event.target.dataset.field;
+        if (baActivitiesState[idx]) baActivitiesState[idx][field] = getBaEditableText(event.target);
+      }, 0);
+      return;
+    }
+
+    const rows = parseClipboardTable(text);
+    if (!rows.length || (rows.length === 1 && rows[0].length === 1)) return;
+
+    event.preventDefault();
+
+    const fields = ['aktivitas', 'luaran', 'pic', 'catatan'];
+    const startIndex = parseInt(event.target.dataset.index, 10);
+    const startField = fields.indexOf(event.target.dataset.field);
+    const fieldOffset = startField >= 0 ? startField : 0;
+
+    rows.forEach((cols, rowOffset) => {
+      const targetIndex = startIndex + rowOffset;
+      if (!baActivitiesState[targetIndex]) {
+        baActivitiesState[targetIndex] = { aktivitas: '', luaran: '', pic: '', catatan: '' };
+      }
+
+      cols.forEach((value, colOffset) => {
+        const field = fields[fieldOffset + colOffset];
+        if (field) baActivitiesState[targetIndex][field] = value;
+      });
+    });
+
+    renderBaActivitiesInModal();
+  }
+
+  function insertPlainTextAtCaret(text) {
+    if (document.queryCommandSupported?.('insertText')) {
+      document.execCommand('insertText', false, text);
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection?.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(document.createTextNode(text));
+    range.collapse(false);
   }
 
   function handleBaDocImageUpload(e) {
@@ -4417,7 +4916,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <tr>
               <td style="font-weight: bold;">Lokasi Luring/Daring</td>
               <td style="text-align: center;">:</td>
-              <td>${escapeHtml(lokasi)}</td>
+              <td>${linkifyText(lokasi)}</td>
             </tr>
           </table>
 
@@ -4458,10 +4957,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <tbody>
               ${validActivities.map(a => `
                 <tr>
-                  <td>${escapeHtml(a.aktivitas)}</td>
-                  <td>${escapeHtml(a.luaran)}</td>
-                  <td style="text-align: center;">${escapeHtml(a.pic)}</td>
-                  <td>${escapeHtml(a.catatan)}</td>
+                  <td>${linkifyText(a.aktivitas)}</td>
+                  <td>${linkifyText(a.luaran)}</td>
+                  <td class="ba-pic-cell">${escapeHtml(a.pic)}</td>
+                  <td>${linkifyText(a.catatan)}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -4530,6 +5029,165 @@ document.addEventListener('DOMContentLoaded', () => {
     previewBackdrop.classList.add('active');
   }
 
+  function openBeritaAcaraPreviewTab() {
+    saveBeritaAcaraDraft(false);
+    const documentHtml = buildBeritaAcaraHtml();
+    const previewDocument = `<!DOCTYPE html>
+      <html lang="id">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Preview Berita Acara</title>
+        <style>
+          @page { size: A4 portrait; margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { margin: 0; background: #E5E7EB; color: #111827; font-family: Arial, sans-serif; }
+          .preview-toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            padding: 12px 16px;
+            background: #FFFFFF;
+            border-bottom: 1px solid #CBD5E1;
+          }
+          .preview-toolbar button {
+            border: 1px solid #1E40AF;
+            border-radius: 8px;
+            background: #1E40AF;
+            color: #FFFFFF;
+            padding: 8px 14px;
+            font: 600 13px Arial, sans-serif;
+            cursor: pointer;
+          }
+          .preview-toolbar button.secondary {
+            background: #FFFFFF;
+            color: #1E40AF;
+          }
+          .preview-page {
+            width: min(210mm, calc(100vw - 32px));
+            min-height: 297mm;
+            margin: 24px auto;
+            padding: 16mm;
+            background: #FFFFFF;
+            box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+          }
+          .ba-document-wrapper {
+            background: #FFFFFF;
+            font-family: 'Times New Roman', Times, serif;
+          }
+          .ba-document-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 10.5pt;
+            line-height: 1.35;
+            color: #000;
+            margin-bottom: -1px;
+          }
+          .ba-document-table th,
+          .ba-document-table td {
+            border: 1px solid #000;
+            padding: 6px;
+            vertical-align: top;
+          }
+          .ba-document-table th {
+            background: #F8FAFC;
+            text-align: center;
+            font-weight: bold;
+          }
+          .ba-document-table tbody td {
+            text-align: justify;
+            text-justify: inter-word;
+          }
+          .ba-document-table tbody td.ba-pic-cell {
+            text-align: center;
+          }
+          .ba-signature-grid {
+            display: flex;
+            width: 100%;
+            border: 1px solid #000;
+            border-top: none;
+            margin-bottom: -1px;
+          }
+          .ba-signature-col {
+            flex: 1;
+            border-right: 1px solid #000;
+            text-align: center;
+            padding: 8px 4px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 130px;
+          }
+          .ba-signature-col:last-child { border-right: none; }
+          .ba-signature-space { height: 80px; }
+          .ba-signature-name {
+            font-weight: bold;
+            font-size: 9.5pt;
+          }
+          .ba-signature-nim { font-size: 9pt; }
+          .ba-doc-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 10px;
+            border: 1px solid #000;
+            border-top: none;
+          }
+          .ba-doc-img {
+            width: 100%;
+            max-height: none;
+            border: 1px solid #CBD5E1;
+            border-radius: 4px;
+            object-fit: contain;
+          }
+          .ba-link {
+            color: #1D4ED8;
+            text-decoration: underline;
+            overflow-wrap: anywhere;
+          }
+          @media print {
+            body { background: #FFFFFF; }
+            .preview-toolbar { display: none; }
+            .preview-page {
+              width: auto;
+              min-height: auto;
+              margin: 0;
+              padding: 0;
+              box-shadow: none;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="preview-toolbar">
+          <button type="button" class="secondary" onclick="window.close()">Tutup</button>
+          <button type="button" onclick="window.print()">Cetak / Simpan PDF</button>
+        </div>
+        <main class="preview-page">${documentHtml}</main>
+      </body>
+      </html>`;
+
+    const previewBlob = new Blob([previewDocument], { type: 'text/html;charset=utf-8' });
+    const previewUrl = URL.createObjectURL(previewBlob);
+    const previewWindow = window.open(previewUrl, '_blank');
+    if (!previewWindow) {
+      URL.revokeObjectURL(previewUrl);
+      Swal.fire({
+        icon: 'info',
+        title: 'Preview belum terbuka',
+        text: 'Izinkan pop-up untuk membuka preview berita acara di tab baru.',
+        confirmButtonColor: '#1E40AF'
+      });
+      return;
+    }
+
+    setTimeout(() => URL.revokeObjectURL(previewUrl), 60000);
+  }
+
   function closeBeritaAcaraPreview() {
     const previewBackdrop = document.getElementById('beritaAcaraPreviewBackdrop');
     if (previewBackdrop) previewBackdrop.classList.remove('active');
@@ -4550,8 +5208,90 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1000);
   }
 
+  async function uploadManualBeritaAcara(meetingId, taskId) {
+    if (!requirePermission('documents', 'create')) return;
+
+    const { meeting, task } = findMeetingForBeritaAcara(meetingId, taskId);
+    if (!meeting) {
+      Swal.fire({ icon: 'error', title: 'Pertemuan tidak ditemukan', text: 'Data pertemuan belum tersedia.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf,.doc,.docx,.png,.jpg,.jpeg';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.remove();
+      if (!file) return;
+
+      if (file.size > 10 * 1024 * 1024) {
+        Swal.fire({ icon: 'warning', title: 'File terlalu besar', text: 'Ukuran file maksimal 10 MB.', confirmButtonColor: '#1E40AF' });
+        return;
+      }
+
+      const dateLabel = meeting.date ? formatWibDateOnly(meeting.date) : '';
+      const title = `Berita Acara - ${meeting.title}${dateLabel ? ` (${dateLabel})` : ''}`;
+      const descriptionParts = [
+        `Berita acara manual untuk pertemuan "${meeting.title}".`,
+        task?.title ? `Terkait tugas: ${task.title}.` : '',
+        `ID pertemuan: ${meeting.id}.`
+      ].filter(Boolean);
+
+      Swal.fire({
+        title: 'Mengunggah berita acara...',
+        text: 'Mohon tunggu sebentar.',
+        allowOutsideClick: false,
+        didOpen: () => Swal.showLoading()
+      });
+
+      const result = await window.capstoneStore.uploadDocumentArchive({
+        title,
+        category: 'berita_acara',
+        description: descriptionParts.join(' '),
+        meetingId: meeting.id,
+        file
+      });
+
+      if (!result?.ok) {
+        Swal.fire({ icon: 'error', title: 'Upload gagal', text: 'Berita acara manual belum dapat disimpan.', confirmButtonColor: '#1E40AF' });
+        return;
+      }
+
+      window.capstoneStore.markMeetingBeritaAcara(taskId, meetingId);
+      window.capstoneStore.logAudit('Upload Berita Acara Manual', `Mengunggah berita acara manual untuk pertemuan "${meeting.title}"`, {
+        actionTag: 'upload_manual_berita_acara',
+        object: { type: 'Pertemuan', id: meetingId, name: meeting.title },
+        changes: [
+          { field: 'Arsip Dokumen', from: null, to: result.data?.id || title },
+          { field: 'Status Berita Acara', from: 'Belum Ada', to: 'Ada' }
+        ]
+      });
+
+      documentArchivesLoaded = false;
+      await loadDocumentArchives(true);
+      renderCurrentView();
+      Swal.fire({ icon: 'success', title: 'Berita acara tersimpan', text: 'File sudah masuk ke Arsip Dokumen dan pertemuan tetap ditandai memiliki berita acara.', timer: 1800, showConfirmButton: false });
+    }, { once: true });
+
+    input.click();
+  }
+
   /* Sanitasi HTML */
   function escapeHtml(str = '') {
     return String(str ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
+  }
+
+  function linkifyText(str = '') {
+    const escaped = escapeHtml(str);
+    return escaped
+      .replace(/(https?:\/\/[^\s<]+)/g, (match) => {
+        const trailing = match.match(/[),.;!?]+$/)?.[0] || '';
+        const url = trailing ? match.slice(0, -trailing.length) : match;
+        return `<a class="ba-link" href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>${trailing}`;
+      })
+      .replace(/\r?\n/g, '<br/>');
   }
 });

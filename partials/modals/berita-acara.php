@@ -1,6 +1,6 @@
 <!-- Modal Dialog Berita Acara Kerja Kelompok -->
 <div id="beritaAcaraModalBackdrop" class="modal-backdrop">
-  <div class="modal-dialog" style="max-width: 820px;">
+  <div class="modal-dialog berita-acara-dialog">
     <div class="modal-header">
       <h3>📄 Form Berita Acara Kerja Kelompok Capstone</h3>
       <button id="baModalCloseBtn" class="modal-close-btn">&times;</button>
@@ -28,7 +28,7 @@
 
         <div class="form-group">
           <label class="form-label">Lokasi Luring / Daring & Link Platform</label>
-          <input type="text" id="baLokasiInput" class="form-input" placeholder="Daring (Microsoft Teams) https://teams.microsoft.com/..." required />
+          <textarea id="baLokasiInput" class="form-textarea ba-location-textarea" rows="2" placeholder="Daring (Microsoft Teams)&#10;https://teams.microsoft.com/..." required></textarea>
         </div>
 
         <!-- Kehadiran Anggota Tim -->
@@ -59,8 +59,9 @@
     </div>
     <div class="modal-footer">
       <button type="button" id="baModalCancelBtn" class="btn btn-secondary">Batal</button>
+      <button type="button" id="baDraftSaveBtn" class="btn btn-secondary">Simpan Sementara</button>
       <button type="button" id="baPreviewBtn" class="btn btn-secondary">
-        Preview Berita Acara
+        Preview di Tab Baru
       </button>
       <button type="button" id="baPrintBtn" class="btn btn-primary" style="background: #1E40AF; border-color: #1E40AF; display: none;">
         Cetak / Simpan PDF

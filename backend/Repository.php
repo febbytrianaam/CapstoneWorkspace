@@ -131,7 +131,7 @@ final class Repository
     public function documentArchives(): array
     {
         $rows = $this->db->query(
-            'SELECT id, title, category, description, original_name, mime_type, file_size, uploaded_by, created_at
+            'SELECT id, title, category, description, meeting_id, original_name, mime_type, file_size, uploaded_by, created_at
              FROM document_archives ORDER BY created_at DESC, id DESC'
         )->fetchAll();
 
@@ -140,6 +140,7 @@ final class Repository
             'title' => $row['title'],
             'category' => $row['category'],
             'description' => $row['description'] ?? '',
+            'meetingId' => $row['meeting_id'] ?? '',
             'originalName' => $row['original_name'],
             'mimeType' => $row['mime_type'],
             'fileSize' => (int) $row['file_size'],
@@ -153,6 +154,7 @@ final class Repository
         $title = trim((string) ($data['title'] ?? ''));
         $category = trim((string) ($data['category'] ?? 'lainnya'));
         $description = trim((string) ($data['description'] ?? ''));
+        $meetingId = trim((string) ($data['meeting_id'] ?? ''));
         $originalName = trim((string) ($data['original_name'] ?? ''));
         $mimeType = trim((string) ($data['mime_type'] ?? 'application/octet-stream'));
         $fileData = $data['file_data'] ?? '';
@@ -164,13 +166,14 @@ final class Repository
 
         $id = 'archive-' . time() . '-' . random_int(100, 999);
         $stmt = $this->db->prepare(
-            'INSERT INTO document_archives (id, title, category, description, original_name, mime_type, file_size, file_data, uploaded_by)
-             VALUES (:id, :title, :category, :description, :original_name, :mime_type, :file_size, :file_data, :uploaded_by)'
+            'INSERT INTO document_archives (id, title, category, description, meeting_id, original_name, mime_type, file_size, file_data, uploaded_by)
+             VALUES (:id, :title, :category, :description, :meeting_id, :original_name, :mime_type, :file_size, :file_data, :uploaded_by)'
         );
         $stmt->bindValue(':id', $id);
         $stmt->bindValue(':title', $title);
         $stmt->bindValue(':category', $category);
         $stmt->bindValue(':description', $description);
+        $stmt->bindValue(':meeting_id', $meetingId !== '' ? $meetingId : null);
         $stmt->bindValue(':original_name', $originalName);
         $stmt->bindValue(':mime_type', $mimeType);
         $stmt->bindValue(':file_size', $fileSize, PDO::PARAM_INT);
@@ -183,6 +186,7 @@ final class Repository
             'title' => $title,
             'category' => $category,
             'description' => $description,
+            'meetingId' => $meetingId,
             'originalName' => $originalName,
             'mimeType' => $mimeType,
             'fileSize' => $fileSize,
@@ -1062,6 +1066,7 @@ final class Repository
                 title VARCHAR(180) NOT NULL,
                 category VARCHAR(60) NOT NULL DEFAULT "lainnya",
                 description TEXT NULL,
+                meeting_id VARCHAR(80) NULL,
                 original_name VARCHAR(255) NOT NULL,
                 mime_type VARCHAR(120) NOT NULL,
                 file_size INT UNSIGNED NOT NULL,
@@ -1070,9 +1075,22 @@ final class Repository
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_document_archives_category (category),
+                INDEX idx_document_archives_meeting (meeting_id),
                 INDEX idx_document_archives_created (created_at)
             ) ENGINE=InnoDB'
         );
+        $columns = $this->db->query('SHOW COLUMNS FROM document_archives')->fetchAll();
+        $hasMeetingId = false;
+        foreach ($columns as $column) {
+            if ($column['Field'] === 'meeting_id') {
+                $hasMeetingId = true;
+                break;
+            }
+        }
+        if (!$hasMeetingId) {
+            $this->db->exec('ALTER TABLE document_archives ADD COLUMN meeting_id VARCHAR(80) NULL AFTER description');
+            $this->db->exec('ALTER TABLE document_archives ADD INDEX idx_document_archives_meeting (meeting_id)');
+        }
     }
 
     private function ensureMeetingTaskOptional(): void

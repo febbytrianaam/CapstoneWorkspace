@@ -38,6 +38,14 @@
         </select>
       </div>
 
+      <div id="documentArchiveMeetingField" class="form-group document-archive-meeting-field">
+        <label class="form-label" for="documentArchiveMeeting">Pertemuan Terkait</label>
+        <select id="documentArchiveMeeting" class="form-input">
+          <option value="">Tidak dikaitkan ke pertemuan</option>
+        </select>
+        <small class="form-help">Jika ini file berita acara, pilih pertemuannya agar file bisa dibuka langsung dari menu Tugas.</small>
+      </div>
+
       <div class="form-group">
         <label class="form-label" for="documentArchiveFile">File Dokumen</label>
         <input id="documentArchiveFile" class="form-input" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg" required />
