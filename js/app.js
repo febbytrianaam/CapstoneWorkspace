@@ -15,6 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const PAGE_STORAGE_KEY = 'capstone_current_page_v3';
   const PROGRESS_NOTE_COLLAPSE_KEY = 'capstone_progress_note_collapsed_v1';
   const BERITA_ACARA_DRAFTS_KEY = 'capstone_berita_acara_drafts_v1';
+  const MEMBER_TOUR_ENABLED = false;
+  const MEMBER_TOUR_STORAGE_PREFIX = 'capstone_member_tour_done_v1:';
   const VALID_PAGE_IDS = ['dashboard', 'tugas1', 'tugas2', 'tugas3', 'flow', 'documents', 'users', 'audit', 'rbac'];
   const DOCUMENT_ARCHIVE_CATEGORIES = {
     berita_acara: 'Berita Acara',
@@ -47,6 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let modalTaskCanUpdateProgress = false;
   let modalTaskCanManageStructure = false;
   let modalTaskCanSubmitReview = false;
+  let modalTaskCanCancelReview = false;
   let modalTaskCanReview = false;
   let baActivitiesState = [];
   let baSheetSelection = null;
@@ -58,6 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let documentArchivesLoaded = false;
   let documentArchivesLoading = false;
   let documentArchiveCategoryFilter = 'SEMUA';
+  let memberTourState = { active: false, index: 0, steps: [], scheduled: false };
 
   // Inisialisasi UI & Pengendali Komponen
   initTheme();
@@ -75,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initGlobalButtons();
   initFlowDocuments();
   initDocumentArchive();
+  if (MEMBER_TOUR_ENABLED) initMemberTour();
   window.addEventListener('capstone:data-synced', () => {
     syncSidebarNavigation();
     renderCurrentView();
@@ -345,6 +350,320 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function initMemberTour() {
+    const existing = document.getElementById('memberTourLayer');
+    if (existing) existing.remove();
+    window.addEventListener('resize', () => {
+      if (memberTourState.active) positionMemberTourPopover();
+    });
+    document.getElementById('memberTourReplayBtn')?.addEventListener('click', () => {
+      const user = window.capstoneStore.getCurrentUser();
+      if (!user) return;
+      localStorage.removeItem(getMemberTourKey(user));
+      closeMemberTour(false);
+      startMemberTour(user, { force: true });
+    });
+  }
+
+  function getMemberTourKey(user) {
+    return `${MEMBER_TOUR_STORAGE_PREFIX}${user?.id || user?.username || user?.name || 'member'}`;
+  }
+
+  function shouldShowMemberTour(user) {
+    return Boolean(user?.role === 'member' && localStorage.getItem(getMemberTourKey(user)) !== 'true');
+  }
+
+  function scheduleMemberTour(user) {
+    if (!MEMBER_TOUR_ENABLED) return;
+    if (!shouldShowMemberTour(user) || memberTourState.active || memberTourState.scheduled) return;
+    memberTourState.scheduled = true;
+    window.setTimeout(() => {
+      memberTourState.scheduled = false;
+      const latestUser = window.capstoneStore.getCurrentUser();
+      if (shouldShowMemberTour(latestUser)) startMemberTour(latestUser);
+    }, 650);
+  }
+
+  function getMemberTourSteps(user = window.capstoneStore.getCurrentUser()) {
+    if (!user) return [];
+    const steps = [];
+    const allowedTaskPages = ['tugas1', 'tugas2', 'tugas3'].filter(page => window.RBAC.canPage(user, page));
+
+    if (window.RBAC.canPage(user, 'dashboard') && window.RBAC.canWidget(user, 'personal')) {
+      steps.push({
+        page: 'dashboard',
+        selector: '#personalTaskSection',
+        requiredSelector: '#personalTaskSection',
+        title: 'Mulai dari Tugasku',
+        text: 'Bagian ini menampilkan tugas yang menjadi tanggung jawab kamu. Klik kartu tugas untuk melihat detail, checklist, catatan, dan status review.'
+      });
+    }
+
+    allowedTaskPages.forEach((taskPage, index) => {
+      const navSelector = `.nav-item[data-target="${taskPage}"]`;
+      const phaseShort = PHASE_META[taskPage]?.short || 'Tahap Tugas';
+      steps.push({
+        page: index === 0 && window.RBAC.canPage(user, 'dashboard') ? 'dashboard' : taskPage,
+        selector: navSelector,
+        requiredSelector: navSelector,
+        title: `Buka ${phaseShort}`,
+        text: `${phaseShort} berisi pekerjaan pada tahap Capstone tersebut. Gunakan menu ini untuk berpindah antar tahap yang kamu punya aksesnya.`,
+        prepare: () => openSidebarForTour()
+      });
+      steps.push({
+        page: taskPage,
+        selector: '.toolbar',
+        requiredSelector: `#${taskPage} .toolbar`,
+        title: `Cari Tugas di ${phaseShort}`,
+        text: 'Gunakan pencarian, filter PIC, prioritas, dan arsip untuk menemukan tugas tanpa harus scroll terlalu jauh.'
+      });
+      if (index === 0) {
+        steps.push({
+          page: taskPage,
+          selector: '.kanban-board-wrapper',
+          requiredSelector: `#${taskPage} .kanban-board-wrapper`,
+          title: 'Update dari Board',
+          text: 'Kartu tugas di board bisa dibuka untuk melihat pekerjaan orang lain. Kalau kamu PIC-nya, kamu bisa update status, checklist, dan ajukan review dari detail tugas.'
+        });
+      }
+    });
+
+    if (window.RBAC.canPage(user, 'documents') && window.RBAC.can(user, 'documents', 'read')) {
+      steps.push({
+        page: 'documents',
+        selector: '#documentArchiveSection',
+        requiredSelector: '#documentArchiveSection',
+        title: 'Arsip Dokumen',
+        text: 'Dokumen final seperti berita acara, surat izin, diagram, dan lampiran bisa dilihat atau diunduh dari sini.'
+      });
+    }
+
+    if (window.RBAC.canPage(user, 'dashboard')) {
+      steps.push({
+        page: 'dashboard',
+        selector: '.notification-wrapper',
+        requiredSelector: '.notification-wrapper',
+        title: 'Cek Pemberitahuan',
+        text: 'Pemberitahuan membantu kamu tahu assignment baru, perubahan status, dan aktivitas penting lain dari tim.'
+      });
+    }
+
+    return steps;
+  }
+
+  function openSidebarForTour() {
+    const sidebar = document.querySelector('.sidebar');
+    const overlay = document.querySelector('.sidebar-overlay');
+    if (window.matchMedia('(max-width: 1024px)').matches) {
+      sidebar?.classList.add('open');
+      overlay?.classList.add('visible');
+    }
+  }
+
+  function closeSidebarAfterTourStep(target) {
+    if (!window.matchMedia('(max-width: 1024px)').matches) return;
+    if (target?.closest('.sidebar')) return;
+    document.querySelector('.sidebar')?.classList.remove('open');
+    document.querySelector('.sidebar-overlay')?.classList.remove('visible');
+  }
+
+  function startMemberTour(user, options = {}) {
+    const force = Boolean(options.force);
+    if (!force && !shouldShowMemberTour(user)) return;
+    const steps = getMemberTourSteps(user);
+    if (!steps.length) {
+      if (force) {
+        Swal.fire({
+          icon: 'info',
+          title: 'Panduan belum tersedia',
+          text: 'Tidak ada bagian panduan yang bisa ditampilkan untuk akses akun ini.',
+          confirmButtonColor: '#1E40AF'
+        });
+      } else {
+        localStorage.setItem(getMemberTourKey(user), 'true');
+      }
+      return;
+    }
+    memberTourState = { active: true, index: 0, steps, scheduled: false };
+    renderMemberTourStep();
+  }
+
+  function finishMemberTour(markDone = true) {
+    const user = window.capstoneStore.getCurrentUser();
+    if (markDone && user) localStorage.setItem(getMemberTourKey(user), 'true');
+    closeMemberTour(false);
+  }
+
+  function closeMemberTour(markDone = false) {
+    clearMemberTourFocus();
+    document.getElementById('memberTourLayer')?.remove();
+    document.body.classList.remove('member-tour-active');
+    document.querySelector('.sidebar-overlay')?.classList.remove('visible');
+    document.querySelector('.sidebar')?.classList.remove('open');
+    memberTourState = { active: false, index: 0, steps: [], scheduled: false };
+    if (markDone) {
+      const user = window.capstoneStore.getCurrentUser();
+      if (user) localStorage.setItem(getMemberTourKey(user), 'true');
+    }
+  }
+
+  function clearMemberTourFocus() {
+    document.querySelectorAll('.member-tour-focus').forEach(el => el.classList.remove('member-tour-focus'));
+    document.querySelectorAll('.member-tour-surface').forEach(el => el.classList.remove('member-tour-surface'));
+  }
+
+  function renderMemberTourStep() {
+    if (!memberTourState.active) return;
+    const step = memberTourState.steps[memberTourState.index];
+    if (!step) {
+      finishMemberTour(true);
+      return;
+    }
+
+    const user = window.capstoneStore.getCurrentUser();
+    if (step.page && !window.RBAC.canPage(user, step.page)) {
+      skipCurrentMemberTourStep();
+      return;
+    }
+
+    if (step.page && currentPage !== step.page) {
+      setPage(step.page, { restoreScroll: false });
+      window.setTimeout(renderMemberTourStep, 220);
+      return;
+    }
+
+    step.prepare?.();
+    window.setTimeout(() => {
+      clearMemberTourFocus();
+      let target = document.querySelector(step.selector);
+      if (!isTourTargetVisible(target) || (step.requiredSelector && !isTourTargetVisible(document.querySelector(step.requiredSelector)))) {
+        skipCurrentMemberTourStep();
+        return;
+      }
+      closeSidebarAfterTourStep(target);
+      target.classList.add('member-tour-focus');
+      target.closest('.sidebar, .top-header')?.classList.add('member-tour-surface');
+      if (!target.closest('.sidebar, .top-header')) {
+        target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+      }
+      ensureMemberTourLayer();
+      updateMemberTourContent(step, target);
+    }, 120);
+  }
+
+  function isTourTargetVisible(target) {
+    if (!target) return false;
+    const style = window.getComputedStyle(target);
+    const rect = target.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  }
+
+  function skipCurrentMemberTourStep() {
+    memberTourState.steps.splice(memberTourState.index, 1);
+    if (memberTourState.index >= memberTourState.steps.length) memberTourState.index = 0;
+    renderMemberTourStep();
+  }
+  function ensureMemberTourLayer() {
+    if (document.getElementById('memberTourLayer')) return;
+    const layer = document.createElement('div');
+    layer.id = 'memberTourLayer';
+    layer.className = 'member-tour-layer';
+    layer.innerHTML = `
+      <div class="member-tour-backdrop"></div>
+      <section id="memberTourPopover" class="member-tour-popover" role="dialog" aria-live="polite" aria-label="Panduan penggunaan aplikasi">
+        <div class="member-tour-step" id="memberTourStepLabel"></div>
+        <h3 id="memberTourTitle"></h3>
+        <p id="memberTourText"></p>
+        <div class="member-tour-actions">
+          <button type="button" class="btn btn-secondary" data-tour-action="skip">Lewati Tour</button>
+          <div>
+            <button type="button" class="btn btn-secondary" data-tour-action="prev">Sebelumnya</button>
+            <button type="button" class="btn btn-primary" data-tour-action="next">Lanjut</button>
+          </div>
+        </div>
+      </section>
+    `;
+    document.body.appendChild(layer);
+    layer.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-tour-action]')?.dataset.tourAction;
+      if (!action) return;
+      event.preventDefault();
+      handleMemberTourAction(action);
+    });
+  }
+
+  function updateMemberTourContent(step, target) {
+    document.body.classList.add('member-tour-active');
+    document.getElementById('memberTourStepLabel').textContent = `Langkah ${memberTourState.index + 1} dari ${memberTourState.steps.length}`;
+    document.getElementById('memberTourTitle').textContent = step.title;
+    document.getElementById('memberTourText').textContent = step.text;
+
+    const prevBtn = document.querySelector('[data-tour-action="prev"]');
+    const nextBtn = document.querySelector('[data-tour-action="next"]');
+    if (prevBtn) prevBtn.style.display = memberTourState.index === 0 ? 'none' : 'inline-flex';
+    if (nextBtn) nextBtn.textContent = memberTourState.index === memberTourState.steps.length - 1 ? 'Selesai' : 'Lanjut';
+    positionMemberTourPopover(target);
+  }
+
+  function positionMemberTourPopover(target = document.querySelector('.member-tour-focus')) {
+    const popover = document.getElementById('memberTourPopover');
+    if (!popover || !target) return;
+
+    const rect = target.getBoundingClientRect();
+    const isSmallScreen = window.matchMedia('(max-width: 640px)').matches;
+    const margin = isSmallScreen ? 12 : 16;
+    const isSidebarTarget = Boolean(target.closest('.sidebar'));
+    const sidebarRect = document.querySelector('.sidebar')?.getBoundingClientRect();
+
+    popover.classList.toggle('is-sidebar-mobile', Boolean(isSmallScreen && isSidebarTarget && sidebarRect));
+    popover.style.right = 'auto';
+
+    if (isSmallScreen && isSidebarTarget && sidebarRect) {
+      const width = Math.max(260, window.innerWidth - margin * 2);
+      popover.style.width = `${width}px`;
+      popover.style.left = `${margin}px`;
+      popover.style.top = 'auto';
+      popover.style.bottom = `${margin}px`;
+      return;
+    }
+
+    popover.style.bottom = 'auto';
+    const availableWidth = isSidebarTarget && sidebarRect
+      ? Math.max(220, sidebarRect.width - margin * 2)
+      : window.innerWidth - margin * 2;
+    const width = Math.min(360, availableWidth);
+
+    popover.style.width = `${width}px`;
+    const leftBase = isSidebarTarget && sidebarRect ? sidebarRect.left + margin : rect.left;
+    const left = Math.max(margin, Math.min(leftBase, window.innerWidth - width - margin));
+    popover.style.left = `${left}px`;
+
+    const belowTop = rect.bottom + 12;
+    const aboveTop = rect.top - popover.offsetHeight - 12;
+    const preferredTop = belowTop + popover.offsetHeight <= window.innerHeight - margin ? belowTop : aboveTop;
+    const top = Math.max(margin, Math.min(preferredTop, window.innerHeight - popover.offsetHeight - margin));
+    popover.style.top = `${top}px`;
+  }
+
+  function handleMemberTourAction(action) {
+    if (action === 'skip') {
+      finishMemberTour(true);
+      return;
+    }
+    if (action === 'prev') {
+      memberTourState.index = Math.max(0, memberTourState.index - 1);
+      renderMemberTourStep();
+      return;
+    }
+    if (action === 'next') {
+      if (memberTourState.index >= memberTourState.steps.length - 1) {
+        finishMemberTour(true);
+        return;
+      }
+      memberTourState.index += 1;
+      renderMemberTourStep();
+    }
+  }
   function initAuthentication() {
     const loginForm = document.getElementById('loginForm');
     const loginError = document.getElementById('loginError');
@@ -362,6 +681,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else {
         renderCurrentView();
       }
+      if (MEMBER_TOUR_ENABLED) scheduleMemberTour(user);
     };
 
     (window.capstoneStore.ready || Promise.resolve()).then(() => {
@@ -370,6 +690,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.addEventListener('capstone:auth-required', () => {
       document.body.classList.remove('is-authenticated');
+      closeMemberTour(false);
+      memberTourState.scheduled = false;
     });
 
     loginForm.addEventListener('submit', async (event) => {
@@ -696,6 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const canMeetingRead = canShowMeetings(user);
     const canBeritaCreate = window.RBAC.can(user, 'beritaAcara', 'create');
     const canAuditRead = window.RBAC.can(user, 'audit', 'read');
+    setDisplay('#memberTourReplayBtn', false);
     setDisplay('.add-task-btn', canTaskCreate);
     setDisplay('#dashAddMeetingBtn, .add-meeting-page-btn, #addMeetingBtn', canMeetingCreate);
     setDisplay('#addUserBtn', window.RBAC.can(user, 'users', 'create'));
@@ -908,6 +1231,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!task || task.archivedAt || !window.RBAC.can(user, 'tasks', 'update')) return false;
     if (['superadmin', 'koordinator'].includes(user?.role)) return true;
     return Boolean(task.reviewer && task.reviewer === user?.name && task.pic !== user?.name);
+  }
+
+  function canCancelTaskReview(task, user = window.capstoneStore.getCurrentUser()) {
+    if (!task || task.archivedAt || (task.reviewStatus || 'none') !== 'submitted') return false;
+    return canSubmitTaskReview(task, user);
   }
 
   function canShowMeetings(user = window.capstoneStore.getCurrentUser()) {
@@ -1395,12 +1723,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (window.RBAC.canWidget(currentUser, 'personal') && personalSection && personalList) {
       personalSection.style.display = 'block';
-      const myTasks = tasks.filter(t => t.pic === currentUser.name);
+      const myTasks = tasks.filter(t => t.pic === currentUser.name && t.status !== 'Selesai');
 
       if (personalCountBadge) personalCountBadge.textContent = `${myTasks.length} tugas`;
 
       if (myTasks.length === 0) {
-        personalList.innerHTML = `<div class="card-box-subtitle" style="padding: 1rem 0;">Belum ada tugas yang ditugaskan untuk ${currentUser.name}.</div>`;
+        personalList.innerHTML = `<div class="card-box-subtitle" style="padding: 1rem 0;">Tidak ada tugas aktif untuk ${currentUser.name}. Tugas yang sudah selesai tidak ditampilkan di bagian ini.</div>`;
       } else {
         personalList.innerHTML = myTasks.map(t => {
           const totalChecklist = t.checklist ? t.checklist.length : 0;
@@ -1508,6 +1836,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    renderReviewQueueSection(tasks, currentUser, users);
+
     const phaseProgressContainer = document.getElementById('phaseProgressList');
     if (phaseProgressContainer) {
       phaseProgressContainer.innerHTML = Object.keys(PHASE_META).map(phaseKey => {
@@ -1600,6 +1930,106 @@ document.addEventListener('DOMContentLoaded', () => {
     renderDashboardCharts(tasks);
     renderDashboardMeetings(tasks, users);
     applyRbacUi();
+  }
+
+  function renderReviewQueueSection(tasks, currentUser, users) {
+    const section = document.getElementById('reviewQueueSection');
+    const list = document.getElementById('reviewQueueList');
+    const count = document.getElementById('reviewQueueCount');
+    const title = document.getElementById('reviewQueueTitle');
+    const subtitle = document.getElementById('reviewQueueSubtitle');
+
+    if (!section || !list || !count || !currentUser) return;
+
+    const isManager = ['superadmin', 'koordinator'].includes(currentUser.role);
+    const reviewTasks = getVisibleReviewTasks(tasks, currentUser);
+
+    if (title) title.textContent = isManager ? 'Menunggu Review' : 'Review Tugas';
+    if (subtitle) {
+      subtitle.textContent = isManager
+        ? 'Tugas yang sudah diajukan anggota dan perlu diperiksa.'
+        : 'Tugas kamu yang sedang diperiksa atau tugas yang perlu kamu review.';
+    }
+    count.textContent = `${reviewTasks.length} tugas`;
+
+    if (reviewTasks.length === 0) {
+      section.style.display = 'none';
+      list.innerHTML = '';
+      return;
+    }
+
+    section.style.display = 'block';
+    list.innerHTML = renderReviewQueueItemsHtml(reviewTasks, users);
+    bindReviewQueueItems(list, currentUser, { navigateToPhase: true });
+  }
+
+  function getVisibleReviewTasks(tasks, currentUser) {
+    const isManager = ['superadmin', 'koordinator'].includes(currentUser?.role);
+    return tasks
+      .filter(task => task.reviewStatus === 'submitted' && !task.archivedAt)
+      .filter(task => isManager || isTaskPic(task, currentUser) || canReviewTask(task, currentUser))
+      .sort((a, b) => new Date(b.submittedAt || b.updatedAt || b.createdAt || 0) - new Date(a.submittedAt || a.updatedAt || a.createdAt || 0));
+  }
+
+  function renderReviewQueueItemsHtml(reviewTasks, users) {
+    return reviewTasks.map(task => {
+      const u = users[task.pic] || { color: '#64748B', initial: task.pic ? task.pic.slice(0, 2).toUpperCase() : '??' };
+      const submittedAt = task.submittedAt || task.updatedAt || task.createdAt;
+      const submittedLabel = submittedAt ? formatWibDateTime(submittedAt) : '-';
+      return `
+        <button class="review-queue-item" data-task-id="${task.id}" title="Buka detail ${escapeHtml(task.title)}">
+          <div>
+            <div class="review-queue-title">${escapeHtml(task.title)}</div>
+            <div class="review-queue-meta" style="margin-top: 0.45rem;">
+              <span class="task-review-badge is-warning">Menunggu review</span>
+              <span>${PHASE_META[task.phase]?.short || ''}</span>
+              <span class="priority-badge ${task.priority}">${task.priority}</span>
+            </div>
+          </div>
+          <div class="review-queue-meta">
+            <span style="display:inline-flex; align-items:center; gap:0.35rem;">
+              <span class="pic-mini-avatar" style="background:${u.color}">${u.initial}</span>
+              ${escapeHtml(task.pic || '-')}
+            </span>
+            <span>Reviewer: ${escapeHtml(task.reviewer || '-')}</span>
+            <span>${escapeHtml(submittedLabel)}</span>
+          </div>
+        </button>
+      `;
+    }).join('');
+  }
+
+  function bindReviewQueueItems(root, currentUser, options = {}) {
+    const { navigateToPhase = false } = options;
+    root.querySelectorAll('.review-queue-item').forEach(button => {
+      button.addEventListener('click', () => {
+        const taskId = button.dataset.taskId;
+        const task = window.capstoneStore.getById(taskId);
+        if (!task) return;
+        if (navigateToPhase && task.phase) setPage(task.phase);
+        if (canReadTaskDetails(task, currentUser)) openEditTaskModal(taskId);
+      });
+    });
+  }
+
+  function renderPhaseReviewQueueSection(phaseKey, tasks, currentUser, users) {
+    const reviewTasks = getVisibleReviewTasks(tasks, currentUser);
+    if (reviewTasks.length === 0) return '';
+
+    return `
+      <div class="card-box phase-review-queue" style="margin-bottom: 1.5rem;">
+        <div class="card-box-header">
+          <div>
+            <h2>Menunggu Review — ${PHASE_META[phaseKey]?.short || ''}</h2>
+            <div class="card-box-subtitle">Tugas pada tahap ini yang sudah diajukan dan perlu diperiksa.</div>
+          </div>
+          <span class="column-count">${reviewTasks.length} tugas</span>
+        </div>
+        <div class="review-queue-list">
+          ${renderReviewQueueItemsHtml(reviewTasks, users)}
+        </div>
+      </div>
+    `;
   }
 
   function renderDashboardCharts(tasks) {
@@ -2034,6 +2464,58 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ==========================================
      Render Halaman Kanban Tahapan
      ========================================== */
+  function getFilteredPhaseTasks(phaseKey) {
+    const currentUser = window.capstoneStore.getCurrentUser();
+    const canViewArchive = currentUser?.role === 'superadmin';
+    const allPhaseTasks = window.capstoneStore.getByPhase(phaseKey);
+    let filteredTasks = showArchivedTasks && canViewArchive
+      ? allPhaseTasks
+      : allPhaseTasks.filter(t => !t.archivedAt);
+
+    if (activeSearchQuery.trim()) {
+      const q = activeSearchQuery.toLowerCase();
+      filteredTasks = filteredTasks.filter(t => t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
+    }
+    if (activePicFilter !== 'SEMUA') {
+      filteredTasks = filteredTasks.filter(t => t.pic === activePicFilter);
+    }
+    if (activePriorityFilter !== 'SEMUA') {
+      filteredTasks = filteredTasks.filter(t => t.priority === activePriorityFilter);
+    }
+    return filteredTasks;
+  }
+
+  function renderKanbanBoardHtml(phaseKey, filteredTasks = getFilteredPhaseTasks(phaseKey)) {
+    const currentUser = window.capstoneStore.getCurrentUser();
+    const users = window.capstoneStore.getUsers();
+    return STATUSES.map(status => {
+      const colTasks = filteredTasks.filter(t => t.status === status);
+      return `
+        <div class="kanban-column" data-status="${status}" data-phase="${phaseKey}">
+          <div class="column-header">
+            <div class="column-title-area">
+              <span class="status-dot" style="background: ${STATUS_COLORS[status]}"></span>
+              ${status}
+            </div>
+            <span class="column-count">${colTasks.length}</span>
+          </div>
+          <div class="column-cards-container">
+            ${colTasks.map(t => renderTaskCard(t, currentUser, users)).join('')}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function refreshKanbanBoard(phaseKey) {
+    const pageView = document.getElementById(phaseKey);
+    const grid = pageView?.querySelector('.kanban-grid');
+    if (!grid) return;
+    grid.innerHTML = renderKanbanBoardHtml(phaseKey);
+    bindKanbanEvents(pageView);
+    applyRbacUi();
+  }
+
   function renderPhaseView(phaseKey) {
     const pageView = document.getElementById(phaseKey);
     if (!pageView) return;
@@ -2052,17 +2534,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ? allPhaseTasks
       : allPhaseTasks.filter(t => !t.archivedAt);
 
-    let filteredTasks = visiblePhaseTasks;
-    if (activeSearchQuery.trim()) {
-      const q = activeSearchQuery.toLowerCase();
-      filteredTasks = filteredTasks.filter(t => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
-    }
-    if (activePicFilter !== 'SEMUA') {
-      filteredTasks = filteredTasks.filter(t => t.pic === activePicFilter);
-    }
-    if (activePriorityFilter !== 'SEMUA') {
-      filteredTasks = filteredTasks.filter(t => t.priority === activePriorityFilter);
-    }
+    const filteredTasks = getFilteredPhaseTasks(phaseKey);
 
     const phaseMeetings = [];
     allPhaseTasks.forEach(t => {
@@ -2096,6 +2568,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       ${renderProgressNoteSection(phaseKey, currentUser)}
 
+      ${renderPhaseReviewQueueSection(phaseKey, allPhaseTasks, currentUser, users)}
+
       <div class="toolbar">
         <div class="search-filter-group">
           <input type="text" id="taskSearchInput-${phaseKey}" class="input-search" placeholder="🔍 Cari tugas..." value="${escapeHtml(activeSearchQuery)}" />
@@ -2122,6 +2596,7 @@ document.addEventListener('DOMContentLoaded', () => {
           ` : ''}
         </div>
         <div style="display: flex; gap: 0.5rem; align-items: center;">
+          ${currentUser?.role === 'superadmin' ? `<button class="btn btn-secondary copy-phase-tasks-btn" data-phase="${phaseKey}" title="Salin daftar tugas yang sedang tampil untuk dibandingkan di ChatGPT">📋 Salin Tugas</button>` : ''}
           <button class="btn btn-secondary add-meeting-page-btn" data-phase="${phaseKey}">🗓️ + Buat Pertemuan</button>
           <button class="btn btn-primary add-task-btn" data-phase="${phaseKey}">+ Tambah Tugas</button>
         </div>
@@ -2129,23 +2604,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       <div class="kanban-board-wrapper">
         <div class="kanban-grid">
-          ${STATUSES.map(status => {
-            const colTasks = filteredTasks.filter(t => t.status === status);
-            return `
-              <div class="kanban-column" data-status="${status}" data-phase="${phaseKey}">
-                <div class="column-header">
-                  <div class="column-title-area">
-                    <span class="status-dot" style="background: ${STATUS_COLORS[status]}"></span>
-                    ${status}
-                  </div>
-                  <span class="column-count">${colTasks.length}</span>
-                </div>
-                <div class="column-cards-container">
-                  ${colTasks.map(t => renderTaskCard(t, currentUser, users)).join('')}
-                </div>
-              </div>
-            `;
-          }).join('')}
+          ${renderKanbanBoardHtml(phaseKey, filteredTasks)}
         </div>
       </div>
 
@@ -2249,12 +2708,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     bindProgressNoteEvents(pageView, phaseKey);
+    bindReviewQueueItems(pageView, currentUser, { navigateToPhase: false });
 
     const searchInput = document.getElementById(`taskSearchInput-${phaseKey}`);
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
         activeSearchQuery = e.target.value;
-        renderPhaseView(phaseKey);
+        refreshKanbanBoard(phaseKey);
       });
     }
 
@@ -2290,6 +2750,10 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.addEventListener('click', () => openNewMeetingModal(btn.dataset.phase));
     });
 
+    pageView.querySelectorAll('.copy-phase-tasks-btn').forEach(btn => {
+      btn.addEventListener('click', () => copyPhaseTasksForChatGpt(btn.dataset.phase));
+    });
+
     pageView.querySelectorAll('.meeting-task-link').forEach(btn => {
       btn.addEventListener('click', () => {
         const task = window.capstoneStore.getById(btn.dataset.taskId);
@@ -2299,6 +2763,115 @@ document.addEventListener('DOMContentLoaded', () => {
 
     bindKanbanEvents(pageView);
     applyRbacUi();
+  }
+
+  function buildPhaseTasksMarkdown(phaseKey) {
+    const meta = PHASE_META[phaseKey] || { label: phaseKey, short: phaseKey };
+    const tasks = getFilteredPhaseTasks(phaseKey);
+    const allPhaseTasks = window.capstoneStore.getByPhase(phaseKey);
+    const generatedAt = formatWibDateTime(Date.now(), true);
+    const filterLines = [
+      `Search: ${activeSearchQuery.trim() || 'Semua'}`,
+      `PIC: ${activePicFilter}`,
+      `Prioritas: ${activePriorityFilter}`,
+      `Arsip: ${showArchivedTasks ? 'Ditampilkan' : 'Disembunyikan'}`
+    ];
+
+    const lines = [
+      `# Rekap Tugas ${meta.short}`,
+      '',
+      `Tahap: ${meta.label}`,
+      `Tanggal salin: ${generatedAt}`,
+      `Jumlah tampil: ${tasks.length} dari ${allPhaseTasks.length} tugas`,
+      '',
+      '## Filter Saat Ini',
+      ...filterLines.map(line => `- ${line}`),
+      '',
+      '## Daftar Tugas'
+    ];
+
+    if (!tasks.length) {
+      lines.push('', 'Tidak ada tugas yang sesuai filter saat ini.');
+      return lines.join('\n');
+    }
+
+    tasks.forEach((task, index) => {
+      const checklist = task.checklist || [];
+      const checklistDone = task.checklistDone || [];
+      const doneCount = checklistDone.filter(Boolean).length;
+      lines.push(
+        '',
+        `### ${index + 1}. ${task.title}`,
+        `- ID: ${task.id}`,
+        `- Tahap: ${PHASE_META[task.phase]?.short || task.phase}`,
+        `- PIC: ${task.pic || '-'}`,
+        `- Status: ${task.status || '-'}`,
+        `- Prioritas: ${task.priority || '-'}`,
+        `- Reviewer: ${task.reviewer || '-'}`,
+        `- Status Review: ${getReviewStatusMeta(task.reviewStatus || 'none').label}`,
+        `- Mulai: ${task.startAt ? formatWibDateTime(task.startAt) : '-'}`,
+        `- Deadline: ${task.dueAt ? formatWibDateTime(task.dueAt) : '-'}`,
+        `- Update Terakhir: ${formatTaskUpdatedAt(task)}`,
+        `- Arsip: ${task.archivedAt ? formatWibDateTime(task.archivedAt) : 'Tidak'}`,
+        '',
+        'Deskripsi:',
+        `${task.description || '-'}`,
+        '',
+        `Checklist (${doneCount}/${checklist.length}):`
+      );
+
+      if (checklist.length) {
+        checklist.forEach((item, itemIndex) => {
+          lines.push(`- [${checklistDone[itemIndex] ? 'x' : ' '}] ${item}`);
+        });
+      } else {
+        lines.push('- -');
+      }
+
+      if (task.deliverableUrl) {
+        lines.push('', `Luaran: ${task.deliverableUrl}`);
+      }
+    });
+
+    return lines.join('\n');
+  }
+
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok ? Promise.resolve() : Promise.reject(new Error('Clipboard copy failed'));
+  }
+
+  function copyPhaseTasksForChatGpt(phaseKey) {
+    const currentUser = window.capstoneStore.getCurrentUser();
+    if (currentUser?.role !== 'superadmin') return;
+    const text = buildPhaseTasksMarkdown(phaseKey);
+    copyTextToClipboard(text).then(() => {
+      Swal.fire({
+        icon: 'success',
+        title: 'Daftar tugas disalin',
+        text: 'Daftar tugas siap ditempel ke ChatGPT untuk compare.',
+        timer: 1400,
+        showConfirmButton: false
+      });
+    }).catch(() => {
+      Swal.fire({
+        icon: 'info',
+        title: 'Tidak bisa menyalin otomatis',
+        text: 'Browser menolak akses clipboard. Buka snapshot JSON atau coba lagi dari HTTPS/local.',
+        confirmButtonColor: '#1E40AF'
+      });
+    });
   }
 
   function renderProgressNoteSection(phaseKey, currentUser) {
@@ -3445,6 +4018,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.getElementById('submitReviewBtn')?.addEventListener('click', () => submitTaskReviewAction('submit'));
+    document.getElementById('cancelReviewBtn')?.addEventListener('click', () => submitTaskReviewAction('cancel_submit'));
     document.getElementById('requestRevisionBtn')?.addEventListener('click', () => submitTaskReviewAction('request_revision'));
     document.getElementById('approveTaskBtn')?.addEventListener('click', () => submitTaskReviewAction('approve'));
 
@@ -3452,12 +4026,13 @@ document.addEventListener('DOMContentLoaded', () => {
     bindMeetingModalListeners(document.getElementById('meetingModalBackdrop'));
   }
 
-  function setTaskModalAccess({ canUpdateProgress, canManageStructure, canDelete, canSubmit, canSubmitReview = false, canReview = false, canArchive = false, archiveLabel = 'Arsipkan Tugas', readonlyMessage = 'Status dan checklist hanya bisa diubah oleh PIC tugas ini.' }) {
+  function setTaskModalAccess({ canUpdateProgress, canManageStructure, canDelete, canSubmit, canSubmitReview = false, canCancelReview = false, canReview = false, canArchive = false, archiveLabel = 'Arsipkan Tugas', readonlyMessage = 'Status dan checklist hanya bisa diubah oleh PIC tugas ini.' }) {
     modalTaskCanUpdateProgress = Boolean(canUpdateProgress);
     modalTaskCanManageStructure = Boolean(canManageStructure);
     modalTaskCanSubmitReview = Boolean(canSubmitReview);
+    modalTaskCanCancelReview = Boolean(canCancelReview);
     modalTaskCanReview = Boolean(canReview);
-    const isReadonlyMode = !modalTaskCanUpdateProgress && !modalTaskCanManageStructure && !modalTaskCanReview;
+    const isReadonlyMode = !modalTaskCanUpdateProgress && !modalTaskCanManageStructure && !modalTaskCanCancelReview && !modalTaskCanReview;
 
     const taskForm = document.getElementById('taskForm');
     taskForm?.classList.toggle('task-readonly-mode', isReadonlyMode);
@@ -3471,10 +4046,16 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
     }
 
-    ['taskTitleInput', 'taskDescInput', 'taskPhaseSelect', 'taskPicSelect', 'taskPrioritySelect', 'taskStartAtInput', 'taskDueAtInput', 'taskReviewerSelect'].forEach(id => {
+    ['taskTitleInput', 'taskDescInput', 'taskPhaseSelect', 'taskPicSelect', 'taskPrioritySelect', 'taskStartAtInput', 'taskDueAtInput'].forEach(id => {
       const field = document.getElementById(id);
       if (field) field.disabled = !modalTaskCanManageStructure;
     });
+
+    const reviewerSelect = document.getElementById('taskReviewerSelect');
+    const currentUser = window.capstoneStore.getCurrentUser();
+    if (reviewerSelect) {
+      reviewerSelect.disabled = !(modalTaskCanManageStructure && currentUser?.role === 'superadmin');
+    }
 
     const statusSelect = document.getElementById('taskStatusSelect');
     if (statusSelect) statusSelect.disabled = !modalTaskCanUpdateProgress;
@@ -3483,7 +4064,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (deliverableInput) deliverableInput.disabled = !(modalTaskCanUpdateProgress || modalTaskCanManageStructure);
 
     const reviewNoteInput = document.getElementById('taskReviewNoteInput');
-    if (reviewNoteInput) reviewNoteInput.disabled = !(modalTaskCanReview || modalTaskCanManageStructure || modalTaskCanSubmitReview);
+    if (reviewNoteInput) reviewNoteInput.disabled = !(modalTaskCanReview || modalTaskCanManageStructure || modalTaskCanSubmitReview || modalTaskCanCancelReview);
 
     const addChecklistItemBtn = document.getElementById('addChecklistItemBtn');
     if (addChecklistItemBtn) {
@@ -3518,6 +4099,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const submitReviewBtn = document.getElementById('submitReviewBtn');
     if (submitReviewBtn) submitReviewBtn.style.display = modalTaskCanSubmitReview ? 'inline-flex' : 'none';
+
+    const cancelReviewBtn = document.getElementById('cancelReviewBtn');
+    if (cancelReviewBtn) cancelReviewBtn.style.display = modalTaskCanCancelReview ? 'inline-flex' : 'none';
 
     const requestRevisionBtn = document.getElementById('requestRevisionBtn');
     if (requestRevisionBtn) requestRevisionBtn.style.display = modalTaskCanReview ? 'inline-flex' : 'none';
@@ -3938,7 +4522,8 @@ document.addEventListener('DOMContentLoaded', () => {
       canManageStructure,
       canDelete: canManageStructure && window.RBAC.can(currentUser, 'tasks', 'delete'),
       canSubmit: canUpdateProgress || canManageStructure,
-      canSubmitReview: Boolean(task.reviewer) && canSubmitTaskReview(task, currentUser) && !['submitted', 'approved'].includes(task.reviewStatus || 'none'),
+      canSubmitReview: canSubmitTaskReview(task, currentUser) && !['submitted', 'approved'].includes(task.reviewStatus || 'none'),
+      canCancelReview: canCancelTaskReview(task, currentUser),
       canReview: canReviewTask(task, currentUser) && task.reviewStatus === 'submitted',
       canArchive,
       archiveLabel,
@@ -3965,7 +4550,8 @@ document.addEventListener('DOMContentLoaded', () => {
       canManageStructure,
       canDelete: canManageStructure && window.RBAC.can(currentUser, 'tasks', 'delete'),
       canSubmit: canUpdateProgress || canManageStructure,
-      canSubmitReview: Boolean(task.reviewer) && canSubmitTaskReview(task, currentUser) && !['submitted', 'approved'].includes(task.reviewStatus || 'none'),
+      canSubmitReview: canSubmitTaskReview(task, currentUser) && !['submitted', 'approved'].includes(task.reviewStatus || 'none'),
+      canCancelReview: canCancelTaskReview(task, currentUser),
       canReview: canReviewTask(task, currentUser) && task.reviewStatus === 'submitted',
       canArchive,
       archiveLabel,
@@ -4042,8 +4628,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const currentUser = window.capstoneStore.getCurrentUser();
     const canSubmit = reviewAction === 'submit' && canSubmitTaskReview(task, currentUser);
+    const canCancel = reviewAction === 'cancel_submit' && canCancelTaskReview(task, currentUser);
     const canReview = ['approve', 'request_revision'].includes(reviewAction) && canReviewTask(task, currentUser);
-    if (!canSubmit && !canReview) {
+    if (!canSubmit && !canCancel && !canReview) {
       Swal.fire({
         icon: 'info',
         title: 'Akses review terbatas',
@@ -4055,17 +4642,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const reviewNote = document.getElementById('taskReviewNoteInput')?.value.trim() || '';
     const deliverableUrl = document.getElementById('taskDeliverableUrlInput')?.value.trim() || task.deliverableUrl || '';
+    const selectedReviewer = currentUser?.role === 'superadmin'
+      ? (document.getElementById('taskReviewerSelect')?.value || '')
+      : (task.reviewer || '');
+    if (reviewAction === 'submit' && !selectedReviewer) {
+      Swal.fire({
+        icon: 'info',
+        title: 'Reviewer belum dipilih',
+        text: currentUser?.role === 'member'
+          ? 'Minta superadmin menentukan reviewer terlebih dahulu sebelum tugas diajukan.'
+          : 'Pilih reviewer terlebih dahulu sebelum tugas diajukan.',
+        confirmButtonColor: '#1E40AF'
+      });
+      return;
+    }
     const actionLabel = reviewAction === 'submit'
       ? 'Tugas diajukan untuk review.'
+      : reviewAction === 'cancel_submit'
+        ? 'Ajuan review dibatalkan.'
       : reviewAction === 'approve'
         ? 'Tugas disetujui dan ditandai selesai.'
         : 'Catatan revisi tersimpan untuk PIC.';
 
-    window.capstoneStore.update(taskId, {
+    const reviewPayload = {
       reviewAction,
       reviewNote,
       deliverableUrl
-    });
+    };
+    if (currentUser?.role === 'superadmin') {
+      reviewPayload.reviewer = selectedReviewer;
+    }
+
+    window.capstoneStore.update(taskId, reviewPayload);
 
     closeTaskModal();
     renderCurrentView();
@@ -4112,14 +4720,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const dueAtRaw = document.getElementById('taskDueAtInput').value;
     const startAt = startAtRaw ? parseWibDate(startAtRaw)?.getTime() : null;
     const dueAt = dueAtRaw ? parseWibDate(dueAtRaw)?.getTime() : null;
-    const reviewer = document.getElementById('taskReviewerSelect').value;
+    const currentUser = window.capstoneStore.getCurrentUser();
+    const reviewer = currentUser?.role === 'superadmin'
+      ? document.getElementById('taskReviewerSelect').value
+      : (existingTask?.reviewer || '');
     const deliverableUrl = document.getElementById('taskDeliverableUrlInput').value.trim();
     const reviewNote = document.getElementById('taskReviewNoteInput').value.trim();
 
     const validItems = modalChecklistState.filter(item => item.text.trim() !== '');
     const checklist = validItems.map(item => item.text.trim());
     const checklistDone = validItems.map(item => item.done);
-    const currentUser = window.capstoneStore.getCurrentUser();
 
     if (status === 'Selesai' && reviewer && (existingTask?.reviewStatus || 'none') !== 'approved') {
       Swal.fire({
@@ -4203,6 +4813,16 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    document.getElementById('userPasswordToggleBtn')?.addEventListener('click', () => {
+      const input = document.getElementById('userPasswordInput');
+      const button = document.getElementById('userPasswordToggleBtn');
+      if (!input || !button) return;
+      const shouldShow = input.type === 'password';
+      input.type = shouldShow ? 'text' : 'password';
+      button.setAttribute('aria-label', shouldShow ? 'Sembunyikan password' : 'Tampilkan password');
+      button.setAttribute('title', shouldShow ? 'Sembunyikan password' : 'Tampilkan password');
+    });
+
     if (deleteUserBtn) {
       deleteUserBtn.addEventListener('click', () => {
         if (!requirePermission('users', 'delete')) return;
@@ -4236,6 +4856,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('userUsernameInput').value = '';
     document.getElementById('userNimInput').value = '';
     document.getElementById('userPasswordInput').value = '';
+    document.getElementById('userPasswordInput').type = 'password';
     document.getElementById('userPasswordInput').required = true;
 
     if (userModalTitle) userModalTitle.textContent = 'Tambah Pengguna Baru';
@@ -4259,6 +4880,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('userUsernameInput').value = user.username || '';
     document.getElementById('userNimInput').value = user.nim || '';
     document.getElementById('userPasswordInput').value = '';
+    document.getElementById('userPasswordInput').type = 'password';
     document.getElementById('userPasswordInput').required = false;
     document.getElementById('userRoleFormSelect').value = user.role;
     document.getElementById('userColorSelect').value = user.color || '#1E40AF';

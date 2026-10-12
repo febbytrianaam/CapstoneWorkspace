@@ -80,6 +80,7 @@
             <select id="taskReviewerSelect" class="form-select">
               <option value="">Belum ditentukan</option>
             </select>
+            <small class="form-help">Reviewer ditentukan oleh superadmin setelah disepakati tim.</small>
           </div>
 
           <div class="form-group">
@@ -102,6 +103,7 @@
           </div>
           <div class="task-review-actions">
             <button type="button" id="submitReviewBtn" class="btn btn-secondary">Ajukan Review</button>
+            <button type="button" id="cancelReviewBtn" class="btn btn-secondary">Batalkan Ajuan Review</button>
             <button type="button" id="requestRevisionBtn" class="btn btn-secondary">Minta Revisi</button>
             <button type="button" id="approveTaskBtn" class="btn btn-primary">Setujui Tugas</button>
           </div>

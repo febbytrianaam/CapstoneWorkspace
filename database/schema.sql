@@ -96,9 +96,11 @@ CREATE TABLE IF NOT EXISTS phase_progress_notes (
 CREATE TABLE IF NOT EXISTS notifications (
   id VARCHAR(80) PRIMARY KEY,
   user_name VARCHAR(120) NOT NULL,
+  target_user_name VARCHAR(120) NULL,
   text VARCHAR(500) NOT NULL,
   occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   is_read TINYINT(1) NOT NULL DEFAULT 0,
+  INDEX idx_notifications_target (target_user_name, is_read, occurred_at),
   INDEX idx_notifications_time (occurred_at)
 ) ENGINE=InnoDB;
 

@@ -16,6 +16,7 @@ final class Repository
         $repository->ensureUserActivityColumns();
         $repository->ensureTaskArchiveColumn();
         $repository->ensureTaskWorkflowColumns();
+        $repository->ensureNotificationTargetColumn();
         $repository->ensurePhaseProgressNotesTable();
         $repository->ensureUtcTimestampMigration();
         $repository->ensureRbacTable();
@@ -231,7 +232,7 @@ final class Repository
             'tasks' => $this->tasks($canSeeMeetings),
             'meetings' => $canSeeMeetings ? $this->generalMeetings() : [],
             'progressNotes' => $this->phaseProgressNotes(),
-            'notifications' => $this->notifications(),
+            'notifications' => $this->notifications($currentUser),
             'auditLogs' => in_array($currentUser['role'] ?? 'member', ['superadmin', 'koordinator'], true) ? $this->auditLogs() : [],
         ];
     }
@@ -471,6 +472,10 @@ final class Repository
             $merged['reviewStatus'] = 'submitted';
             $merged['submittedAt'] = time() * 1000;
             $merged['reviewedAt'] = null;
+        } elseif ($reviewAction === 'cancel_submit') {
+            $merged['reviewStatus'] = 'none';
+            $merged['submittedAt'] = null;
+            $merged['reviewedAt'] = null;
         } elseif ($reviewAction === 'request_revision') {
             $merged['reviewStatus'] = 'revision_requested';
             $merged['reviewedAt'] = time() * 1000;
@@ -516,6 +521,7 @@ final class Repository
 
         $auditAction = match ($reviewAction) {
             'submit' => 'Ajukan Review Tugas',
+            'cancel_submit' => 'Batalkan Review Tugas',
             'request_revision' => 'Minta Revisi Tugas',
             'approve' => 'Setujui Tugas',
             default => 'Ubah Tugas',
@@ -659,12 +665,24 @@ final class Repository
         return $this->mapPhaseProgressNote($row);
     }
 
-    public function notifications(): array
+    public function notifications(?array $currentUser = null): array
     {
-        $rows = $this->db->query('SELECT * FROM notifications ORDER BY occurred_at DESC')->fetchAll();
+        $role = (string) ($currentUser['role'] ?? 'member');
+        if ($currentUser && $role === 'member' && trim((string) ($currentUser['name'] ?? '')) !== '') {
+            $stmt = $this->db->prepare(
+                'SELECT * FROM notifications
+                 WHERE target_user_name IS NULL OR target_user_name = :target_user_name
+                 ORDER BY occurred_at DESC'
+            );
+            $stmt->execute(['target_user_name' => (string) $currentUser['name']]);
+            $rows = $stmt->fetchAll();
+        } else {
+            $rows = $this->db->query('SELECT * FROM notifications ORDER BY occurred_at DESC')->fetchAll();
+        }
         return array_map(fn (array $row): array => [
             'id' => $row['id'],
             'user' => $row['user_name'],
+            'targetUser' => $row['target_user_name'] ?? null,
             'text' => $row['text'],
             'time' => strtotime($row['occurred_at']) * 1000,
             'read' => (bool) $row['is_read'],
@@ -675,13 +693,18 @@ final class Repository
     {
         $id = (string) ($data['id'] ?? ('n-' . time() . random_int(100, 999)));
         $stmt = $this->db->prepare(
-            'INSERT INTO notifications (id, user_name, text, occurred_at, is_read)
-             VALUES (:id, :user_name, :text, :occurred_at, :is_read)
-             ON DUPLICATE KEY UPDATE text = VALUES(text), is_read = VALUES(is_read)'
+            'INSERT INTO notifications (id, user_name, target_user_name, text, occurred_at, is_read)
+             VALUES (:id, :user_name, :target_user_name, :text, :occurred_at, :is_read)
+             ON DUPLICATE KEY UPDATE
+                user_name = VALUES(user_name),
+                target_user_name = VALUES(target_user_name),
+                text = VALUES(text),
+                is_read = VALUES(is_read)'
         );
         $stmt->execute([
             'id' => $id,
             'user_name' => $data['user'] ?? 'System',
+            'target_user_name' => $this->normalizeNullableString($data['targetUser'] ?? $data['target_user_name'] ?? null),
             'text' => $data['text'] ?? '',
             'occurred_at' => isset($data['time']) ? date('Y-m-d H:i:s', (int) ($data['time'] / 1000)) : date('Y-m-d H:i:s'),
             'is_read' => !empty($data['read']) ? 1 : 0,
@@ -689,8 +712,18 @@ final class Repository
         return $data + ['id' => $id];
     }
 
-    public function markNotificationsRead(): void
+    public function markNotificationsRead(?array $currentUser = null): void
     {
+        $role = (string) ($currentUser['role'] ?? 'member');
+        if ($currentUser && $role === 'member' && trim((string) ($currentUser['name'] ?? '')) !== '') {
+            $stmt = $this->db->prepare(
+                'UPDATE notifications
+                 SET is_read = 1
+                 WHERE target_user_name IS NULL OR target_user_name = :target_user_name'
+            );
+            $stmt->execute(['target_user_name' => (string) $currentUser['name']]);
+            return;
+        }
         $this->db->exec('UPDATE notifications SET is_read = 1');
     }
 
@@ -718,7 +751,7 @@ final class Repository
 
     public function createAuditLog(array $data): array
     {
-        $id = $data['id'] ?? ('a-' . time() . random_int(100, 999));
+        $id = $data['id'] ?? ('a-' . str_replace('.', '', uniqid('', true)) . '-' . random_int(100, 999));
         $timestamp = isset($data['timestamp']) ? date('Y-m-d H:i:s', (int) ($data['timestamp'] / 1000)) : date('Y-m-d H:i:s');
         $object = $data['object'] ?? [];
         $changes = $data['changes'] ?? [];
@@ -932,7 +965,7 @@ final class Repository
              VALUES (:id, NOW(), :user_name, :role, :action, :action_tag, :details, :ip, :device)'
         );
         $stmt->execute([
-            'id' => 'a-' . time() . random_int(100, 999),
+            'id' => 'a-' . str_replace('.', '', uniqid('', true)) . '-' . random_int(100, 999),
             'user_name' => $_SESSION['capstone_user_name'] ?? 'System',
             'role' => $_SESSION['capstone_user_role'] ?? 'system',
             'action' => $action,
@@ -1081,6 +1114,20 @@ final class Repository
         }
         if (!in_array('idx_tasks_review_status', $indexNames, true)) {
             $this->db->exec('ALTER TABLE tasks ADD INDEX idx_tasks_review_status (review_status)');
+        }
+    }
+
+    private function ensureNotificationTargetColumn(): void
+    {
+        $columns = $this->db->query('SHOW COLUMNS FROM notifications')->fetchAll(PDO::FETCH_COLUMN);
+        if (!in_array('target_user_name', $columns, true)) {
+            $this->db->exec('ALTER TABLE notifications ADD COLUMN target_user_name VARCHAR(120) NULL AFTER user_name');
+        }
+
+        $indexes = $this->db->query('SHOW INDEX FROM notifications')->fetchAll(PDO::FETCH_ASSOC);
+        $indexNames = array_map(static fn (array $row): string => (string) $row['Key_name'], $indexes);
+        if (!in_array('idx_notifications_target', $indexNames, true)) {
+            $this->db->exec('ALTER TABLE notifications ADD INDEX idx_notifications_target (target_user_name, is_read, occurred_at)');
         }
     }
 

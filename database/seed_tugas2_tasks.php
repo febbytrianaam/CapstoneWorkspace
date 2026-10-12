@@ -421,6 +421,14 @@ try {
         'INSERT INTO task_checklist_items (task_id, item_order, text, is_done)
          VALUES (:task_id, :item_order, :text, 0)'
     );
+    $notificationStmt = $db->prepare(
+        'INSERT INTO notifications (id, user_name, target_user_name, text, occurred_at, is_read)
+         VALUES (:id, :user_name, :target_user_name, :text, NOW(), 0)
+         ON DUPLICATE KEY UPDATE
+            user_name = VALUES(user_name),
+            target_user_name = VALUES(target_user_name),
+            text = VALUES(text)'
+    );
 
     foreach ($toCreate as $task) {
         $taskStmt->execute([
@@ -441,6 +449,15 @@ try {
                 'text' => $item,
             ]);
         }
+    }
+
+    foreach ($tasks as $task) {
+        $notificationStmt->execute([
+            'id' => 'n-seed-' . $task['id'],
+            'user_name' => $task['pic'],
+            'target_user_name' => $task['pic'],
+            'text' => 'mendapat assignment Tugas 2: "' . $task['title'] . '"',
+        ]);
     }
 
     if ($toCreate) {

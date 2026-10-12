@@ -300,6 +300,9 @@ try {
             Response::json(['ok' => true, 'data' => $repo->tasks($includeMeetings)]);
         }
         if ($method === 'POST') {
+            if (($currentUser['role'] ?? 'member') !== 'superadmin') {
+                unset($input['reviewer']);
+            }
             $targetStatus = (string) ($input['status'] ?? '');
             $targetReviewer = trim((string) ($input['reviewer'] ?? ''));
             $targetReviewStatus = (string) ($input['reviewStatus'] ?? 'none');
@@ -329,7 +332,7 @@ try {
                     if (!$isPic) {
                         Response::error('Member hanya dapat mengubah progres tugas miliknya sendiri.', 403);
                     }
-                    if ($reviewAction !== '' && $reviewAction !== 'submit') {
+                    if ($reviewAction !== '' && !in_array($reviewAction, ['submit', 'cancel_submit'], true)) {
                         Response::error('Aksi review tidak valid untuk PIC tugas.', 403);
                     }
                     if (($input['status'] ?? '') === 'Selesai' && trim((string) ($task['reviewer'] ?? '')) !== '' && ($task['reviewStatus'] ?? 'none') !== 'approved') {
@@ -340,8 +343,17 @@ try {
             } elseif (in_array($reviewAction, ['approve', 'request_revision'], true) && !$isManager && !$isAssignedReviewer) {
                 Response::error('Anda tidak ditunjuk sebagai reviewer tugas ini.', 403);
             }
+            if ($role !== 'superadmin') {
+                unset($input['reviewer']);
+            }
             if ($reviewAction === 'submit' && !$isPic && !$isManager) {
                 Response::error('Tugas hanya dapat diajukan review oleh PIC atau pengelola.', 403);
+            }
+            if ($reviewAction === 'cancel_submit' && !$isPic && !$isManager) {
+                Response::error('Ajuan review hanya dapat dibatalkan oleh PIC atau pengelola.', 403);
+            }
+            if ($reviewAction === 'cancel_submit' && ($task['reviewStatus'] ?? 'none') !== 'submitted') {
+                Response::error('Hanya ajuan review yang masih menunggu review yang dapat dibatalkan.', 422);
             }
             if ($reviewAction === 'approve' && ($task['reviewStatus'] ?? 'none') !== 'submitted') {
                 Response::error('Tugas hanya dapat disetujui setelah diajukan untuk review.', 422);
@@ -445,7 +457,7 @@ try {
     }
 
     if ($resource === 'notifications' && $method === 'PUT' && ($input['action'] ?? '') === 'mark_all_read') {
-        $repo->markNotificationsRead();
+        $repo->markNotificationsRead($currentUser);
         Response::json(['ok' => true]);
     }
 

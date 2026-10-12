@@ -805,16 +805,19 @@ class DataStore {
     return this.notifications;
   }
 
-  addNotification(userName, text) {
+  addNotification(userName, text, targetUser = null) {
     const newNotif = {
       id: 'n-' + Date.now(),
       user: userName,
+      targetUser,
       text,
       time: Date.now(),
       read: false
     };
-    this.notifications.unshift(newNotif);
-    this.saveNotifications();
+    if (!targetUser || !this.currentUser?.name || targetUser === this.currentUser.name) {
+      this.notifications.unshift(newNotif);
+      this.saveNotifications();
+    }
     this.sendToBackend('notifications', 'POST', newNotif);
     return newNotif;
   }
@@ -1104,7 +1107,7 @@ class DataStore {
     };
     this.tasks.push(newTask);
     this.save();
-    this.addNotification(this.currentUser?.name || 'Anggota', `menambahkan tugas baru "${taskData.title}"`);
+    this.addNotification(taskData.pic || this.currentUser?.name || 'Anggota', `mendapat tugas baru "${taskData.title}"`, taskData.pic || null);
     this.logAudit('Tambah Tugas', `Menambahkan tugas baru "${taskData.title}" untuk PIC ${taskData.pic}`);
     this.sendToBackend('tasks', 'POST', newTask);
     return newTask;
@@ -1115,9 +1118,16 @@ class DataStore {
     if (index !== -1) {
       const oldStatus = this.tasks[index].status;
       const nextData = { ...updatedData };
+      if (this.currentUser?.role !== 'superadmin' && Object.prototype.hasOwnProperty.call(nextData, 'reviewer')) {
+        delete nextData.reviewer;
+      }
       if (nextData.reviewAction === 'submit') {
         nextData.reviewStatus = 'submitted';
         nextData.submittedAt = Date.now();
+        nextData.reviewedAt = null;
+      } else if (nextData.reviewAction === 'cancel_submit') {
+        nextData.reviewStatus = 'none';
+        nextData.submittedAt = null;
         nextData.reviewedAt = null;
       } else if (nextData.reviewAction === 'request_revision') {
         nextData.reviewStatus = 'revision_requested';

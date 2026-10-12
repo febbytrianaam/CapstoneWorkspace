@@ -8,14 +8,14 @@
     <h1>Masuk ke Ruang Kerja Tim</h1>
     <p class="auth-subtitle">Gunakan username dan password akun Anda untuk melanjutkan.</p>
 
-    <form id="loginForm" class="auth-form">
+    <form id="loginForm" class="auth-form" autocomplete="off">
       <div class="form-group">
         <label class="form-label" for="loginUsername">Username</label>
-        <input id="loginUsername" class="form-input" type="text" autocomplete="username" required placeholder="Contoh: febby" />
+        <input id="loginUsername" class="form-input" type="text" autocomplete="off" required placeholder="Masukkan username" />
       </div>
       <div class="form-group">
         <label class="form-label" for="loginPassword">Password</label>
-        <input id="loginPassword" class="form-input" type="password" autocomplete="current-password" required placeholder="Masukkan password" />
+        <input id="loginPassword" class="form-input" type="password" autocomplete="off" required placeholder="Masukkan password" />
       </div>
       <div id="loginError" class="auth-error" role="alert"></div>
       <button id="loginSubmitBtn" class="btn btn-primary auth-submit" type="submit">Masuk</button>

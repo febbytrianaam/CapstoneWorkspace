@@ -27,6 +27,18 @@
         <!-- Kartu Statistik Metrik -->
         <div id="statsGrid" class="stats-grid"></div>
 
+        <!-- Seksi Tugas yang Menunggu Review -->
+        <div id="reviewQueueSection" class="card-box" style="display: none;">
+          <div class="card-box-header">
+            <div>
+              <h2 id="reviewQueueTitle">Menunggu Review</h2>
+              <div id="reviewQueueSubtitle" class="card-box-subtitle">Tugas yang sudah diajukan dan perlu diperiksa.</div>
+            </div>
+            <span id="reviewQueueCount" class="column-count">0 tugas</span>
+          </div>
+          <div id="reviewQueueList" class="review-queue-list"></div>
+        </div>
+
         <!-- Seksi Visualisasi Grafik Analisis Proyek (Charts) -->
         <div id="dashboardChartsSection" class="dash-columns" style="margin-bottom: 2rem;">
           <div id="statusChartSection" class="card-box">

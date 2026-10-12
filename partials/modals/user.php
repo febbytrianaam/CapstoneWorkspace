@@ -32,7 +32,12 @@
 
         <div class="form-group">
           <label class="form-label">Password Sementara</label>
-          <input type="password" id="userPasswordInput" class="form-input" minlength="8" autocomplete="new-password" placeholder="Minimal 8 karakter" />
+          <div class="password-toggle-field">
+            <input type="password" id="userPasswordInput" class="form-input" minlength="8" autocomplete="new-password" placeholder="Minimal 8 karakter" />
+            <button type="button" id="userPasswordToggleBtn" class="password-toggle-btn" aria-label="Tampilkan password" title="Tampilkan password">
+              <span aria-hidden="true">👁️</span>
+            </button>
+          </div>
           <small class="form-help">Wajib untuk pengguna baru. Kosongkan saat edit jika tidak ingin reset password.</small>
         </div>
 
