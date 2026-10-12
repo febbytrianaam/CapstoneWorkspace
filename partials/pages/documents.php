@@ -32,7 +32,9 @@
           <option value="surat_izin">Surat Izin</option>
           <option value="surat_pernyataan">Surat Pernyataan</option>
           <option value="proposal_laporan">Proposal / Laporan</option>
+          <option value="dokumen">Dokumen</option>
           <option value="diagram_alur">Diagram / Alur / Gambar</option>
+          <option value="poster">Poster</option>
           <option value="lampiran">Lampiran</option>
           <option value="lainnya">Lainnya</option>
         </select>
@@ -68,7 +70,9 @@
           <option value="surat_izin">Surat Izin</option>
           <option value="surat_pernyataan">Surat Pernyataan</option>
           <option value="proposal_laporan">Proposal / Laporan</option>
+          <option value="dokumen">Dokumen</option>
           <option value="diagram_alur">Diagram / Alur / Gambar</option>
+          <option value="poster">Poster</option>
           <option value="lampiran">Lampiran</option>
           <option value="lainnya">Lainnya</option>
         </select>

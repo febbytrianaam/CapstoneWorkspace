@@ -117,7 +117,7 @@ try {
     if ($resource !== 'auth') {
         $role = $currentUser['role'];
         $permissions = [
-            'superadmin' => ['tasks' => ['GET', 'POST', 'PUT', 'DELETE'], 'meetings' => ['GET', 'POST', 'PUT', 'DELETE'], 'users' => ['GET', 'POST', 'PUT', 'DELETE'], 'audit-logs' => ['GET', 'POST', 'DELETE'], 'snapshot' => ['GET'], 'rbac' => ['GET', 'POST'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET', 'POST', 'DELETE'], 'document-archives' => ['GET', 'POST', 'DELETE'], 'progress-notes' => ['GET', 'PUT']],
+            'superadmin' => ['tasks' => ['GET', 'POST', 'PUT', 'DELETE'], 'meetings' => ['GET', 'POST', 'PUT', 'DELETE'], 'users' => ['GET', 'POST', 'PUT', 'DELETE'], 'audit-logs' => ['GET', 'POST', 'DELETE'], 'snapshot' => ['GET'], 'rbac' => ['GET', 'POST'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET', 'POST', 'DELETE'], 'document-archives' => ['GET', 'POST', 'PUT', 'DELETE'], 'progress-notes' => ['GET', 'PUT']],
             'koordinator' => ['tasks' => ['GET', 'POST', 'PUT', 'DELETE'], 'meetings' => ['GET', 'POST', 'PUT', 'DELETE'], 'users' => ['GET'], 'audit-logs' => ['GET', 'POST'], 'snapshot' => ['GET'], 'rbac' => ['GET'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET', 'POST', 'DELETE'], 'document-archives' => ['GET'], 'progress-notes' => ['GET']],
             'member' => ['tasks' => ['GET', 'PUT'], 'meetings' => [], 'users' => [], 'audit-logs' => ['POST'], 'snapshot' => ['GET'], 'rbac' => ['GET'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET'], 'document-archives' => ['GET'], 'progress-notes' => ['GET']],
         ];
@@ -229,7 +229,7 @@ try {
         $meetingId = trim((string) ($_POST['meeting_id'] ?? ''));
         $file = $_FILES['file'] ?? null;
         $maxBytes = 10 * 1024 * 1024;
-        $allowedCategories = ['berita_acara', 'surat_izin', 'surat_pernyataan', 'proposal_laporan', 'diagram_alur', 'lampiran', 'lainnya'];
+        $allowedCategories = ['berita_acara', 'surat_izin', 'surat_pernyataan', 'proposal_laporan', 'dokumen', 'diagram_alur', 'poster', 'lampiran', 'lainnya'];
         $allowedExtensions = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'png', 'jpg', 'jpeg'];
         $extension = strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
         if ($title === '' || !$file || (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
@@ -262,6 +262,26 @@ try {
             'file_data' => $fileData,
             'uploaded_by' => $currentUser['name'],
         ])], 201);
+    }
+
+    if ($resource === 'document-archives' && $method === 'PUT') {
+        $id = (string) ($_GET['id'] ?? '');
+        if ($id === '') {
+            Response::error('Parameter id wajib diisi.', 422);
+        }
+        $title = trim((string) ($input['title'] ?? ''));
+        $category = trim((string) ($input['category'] ?? 'lainnya'));
+        $description = trim((string) ($input['description'] ?? ''));
+        $meetingId = trim((string) ($input['meetingId'] ?? $input['meeting_id'] ?? ''));
+        if ($title === '') {
+            Response::error('Judul dokumen wajib diisi.', 422);
+        }
+        Response::json(['ok' => true, 'data' => $repo->updateDocumentArchive($id, [
+            'title' => $title,
+            'category' => $category,
+            'description' => $description,
+            'meeting_id' => $meetingId,
+        ])]);
     }
 
     if ($resource === 'document-archives' && $method === 'DELETE') {

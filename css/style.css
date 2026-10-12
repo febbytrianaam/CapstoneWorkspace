@@ -2171,8 +2171,12 @@ body.sidebar-collapsed .theme-toggle-btn {
 .document-archive-upload-form {
   display: grid;
   grid-template-columns: minmax(190px, 1fr) minmax(180px, 0.8fr) minmax(230px, 1fr);
+  grid-template-areas:
+    "title category file"
+    "meeting meeting file"
+    "note note submit";
   gap: 0.9rem;
-  align-items: end;
+  align-items: start;
   padding: 1rem;
   margin-bottom: 1rem;
   background: var(--bg-surface-hover);
@@ -2185,16 +2189,30 @@ body.sidebar-collapsed .theme-toggle-btn {
   margin-bottom: 0;
 }
 
+.document-archive-upload-form > .form-group:nth-of-type(1) {
+  grid-area: title;
+}
+
+.document-archive-upload-form > .form-group:nth-of-type(2) {
+  grid-area: category;
+}
+
+.document-archive-upload-form > .form-group:nth-of-type(4) {
+  grid-area: file;
+}
+
 .document-archive-note-field {
-  grid-column: 1 / 3;
+  grid-area: note;
 }
 
 .document-archive-meeting-field {
   display: none;
-  grid-column: 1 / 3;
+  grid-area: meeting;
 }
 
 .document-archive-upload-form .btn {
+  grid-area: submit;
+  align-self: end;
   min-height: 42px;
   white-space: nowrap;
 }
@@ -2207,23 +2225,56 @@ body.sidebar-collapsed .theme-toggle-btn {
 
 .document-archive-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 0.85rem;
+  grid-template-columns: 1fr;
+  gap: 0.55rem;
 }
 
 .document-archive-card {
+  position: relative;
+  grid-template-columns: 2rem minmax(0, 1fr) auto auto;
+  grid-template-rows: auto;
+  gap: 0.7rem;
+  padding: 0.72rem 0.8rem;
   border-left: 4px solid var(--ut-blue-primary);
+  align-items: center;
 }
 
 .document-archive-icon {
   background: var(--ut-blue-soft);
 }
 
+.document-archive-card .flow-document-icon {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.95rem;
+}
+
+.document-archive-card .flow-document-content {
+  grid-column: 2;
+  grid-row: 1;
+  padding-right: 0;
+}
+
+.document-archive-card .flow-document-content h3 {
+  margin-bottom: 0.15rem;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.document-archive-card .flow-document-meta {
+  font-size: 0.71rem;
+  line-height: 1.32;
+}
+
 .document-archive-category {
   display: inline-flex;
   width: fit-content;
   max-width: 100%;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.25rem;
   padding: 0.18rem 0.45rem;
   border-radius: var(--radius-sm);
   background: rgba(30, 64, 175, 0.08);
@@ -2233,17 +2284,110 @@ body.sidebar-collapsed .theme-toggle-btn {
   overflow-wrap: anywhere;
 }
 
+.document-archive-menu {
+  grid-column: 4;
+  grid-row: 1;
+  position: relative;
+  justify-self: end;
+  align-self: center;
+}
+
+.archive-card-menu-btn {
+  width: 2rem;
+  height: 2rem;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.archive-card-menu-btn:hover {
+  background: var(--ut-blue-soft);
+  border-color: var(--border-focus);
+  color: var(--ut-blue-primary);
+}
+
+.archive-card-menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 20;
+  display: none;
+  min-width: 10.5rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+}
+
+.archive-card-menu.is-open {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.archive-card-menu button {
+  width: 100%;
+  min-height: 2.1rem;
+  padding: 0.45rem 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.archive-card-menu button:hover {
+  background: var(--bg-surface-hover);
+}
+
+.archive-card-menu button.is-danger {
+  color: #DC2626;
+}
+
+.archive-card-menu button.is-danger:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
 .document-archive-description {
-  margin: 0.55rem 0 0;
+  margin: 0.25rem 0 0;
   color: var(--text-secondary);
   font-size: 0.78rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .document-archive-meeting-meta {
   color: var(--ut-blue-primary);
   font-weight: 700;
+}
+
+.document-archive-card .flow-document-actions {
+  grid-column: 3;
+  grid-row: 1;
+  margin-top: 0;
+  justify-self: end;
+  flex-wrap: nowrap;
+}
+
+.document-archive-card .flow-document-actions .btn {
+  min-height: 32px;
+  height: 32px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.74rem;
 }
 
 @media (max-width: 768px) {
@@ -2276,14 +2420,21 @@ body.sidebar-collapsed .theme-toggle-btn {
 
   .document-archive-upload-form {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "title"
+      "category"
+      "meeting"
+      "file"
+      "note"
+      "submit";
   }
 
   .document-archive-note-field {
-    grid-column: auto;
+    grid-area: note;
   }
 
   .document-archive-meeting-field {
-    grid-column: auto;
+    grid-area: meeting;
   }
 
   .document-archive-toolbar {
@@ -2297,6 +2448,27 @@ body.sidebar-collapsed .theme-toggle-btn {
 
   .document-archive-list {
     grid-template-columns: 1fr;
+  }
+
+  .document-archive-card {
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: start;
+  }
+
+  .document-archive-card .flow-document-content {
+    grid-column: 2 / 4;
+  }
+
+  .document-archive-card .flow-document-actions {
+    grid-column: 2 / 4;
+    grid-row: 2;
+    justify-self: start;
+    flex-wrap: wrap;
+  }
+
+  .document-archive-menu {
+    grid-column: 3;
   }
 }
 
@@ -2408,6 +2580,21 @@ body.sidebar-collapsed .theme-toggle-btn {
   color: var(--text-muted);
   font-size: 0.76rem;
   line-height: 1.35;
+}
+
+.archive-edit-form {
+  display: grid;
+  gap: 0.65rem;
+  text-align: left;
+}
+
+.archive-edit-form .form-label {
+  margin-top: 0.3rem;
+}
+
+#archiveEditMeetingWrap {
+  display: grid;
+  gap: 0.35rem;
 }
 
 .form-input, .form-select, .form-textarea {

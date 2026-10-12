@@ -674,6 +674,15 @@ class DataStore {
     }
   }
 
+  async updateDocumentArchive(id, { title, category, description, meetingId }) {
+    return this.sendToBackend('document-archives', 'PUT', {
+      title,
+      category,
+      description: description || '',
+      meetingId: meetingId || ''
+    }, { id });
+  }
+
   async deleteDocumentArchive(id) {
     return this.sendToBackend('document-archives', 'DELETE', null, { id });
   }

@@ -23,7 +23,9 @@ document.addEventListener('DOMContentLoaded', () => {
     surat_izin: 'Surat Izin',
     surat_pernyataan: 'Surat Pernyataan',
     proposal_laporan: 'Proposal / Laporan',
+    dokumen: 'Dokumen',
     diagram_alur: 'Diagram / Alur / Gambar',
+    poster: 'Poster',
     lampiran: 'Lampiran',
     lainnya: 'Lainnya'
   };
@@ -1044,6 +1046,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setDisplay('.delete-guide-btn', window.RBAC.can(user, 'guides', 'delete'));
     setDisplay('#documentArchiveSection', window.RBAC.can(user, 'documents', 'read'), 'block');
     setDisplay('#documentArchiveForm', window.RBAC.can(user, 'documents', 'create'), 'grid');
+    setDisplay('.edit-archive-doc-btn', window.RBAC.can(user, 'documents', 'create'));
     setDisplay('.delete-archive-doc-btn', window.RBAC.can(user, 'documents', 'delete'));
     setDisplay('#statsGrid', window.RBAC.canWidget(user, 'stats'), 'grid');
     setDisplay('#dashboardChartsSection', window.RBAC.canWidget(user, 'charts'), 'grid');
@@ -1419,6 +1422,11 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshDocumentArchiveMeetingSelect();
     }
 
+    document.addEventListener('click', event => {
+      if (event.target.closest('.document-archive-menu')) return;
+      document.querySelectorAll('.archive-card-menu.is-open').forEach(menu => menu.classList.remove('is-open'));
+    });
+
     if (!form) return;
     form.addEventListener('submit', async event => {
       event.preventDefault();
@@ -1500,6 +1508,19 @@ document.addEventListener('DOMContentLoaded', () => {
       .sort((a, b) => (parseWibDate(a.date)?.getTime() || 0) - (parseWibDate(b.date)?.getTime() || 0));
   }
 
+  function buildDocumentArchiveMeetingOptions(selectedMeetingId = '') {
+    const meetings = getAllMeetingsForArchiveLinking();
+    return `
+      <option value="">Tidak dikaitkan ke pertemuan</option>
+      ${meetings.map(meeting => {
+        const phaseLabel = meeting.phase ? meeting.phase.replace('tugas', 'Tugas ') : '';
+        const date = meeting.date ? formatWibDateOnly(meeting.date) : '-';
+        const taskLabel = meeting.task?.title ? ` - ${meeting.task.title}` : (phaseLabel ? ` - ${phaseLabel}` : '');
+        return `<option value="${escapeHtml(meeting.id)}" ${meeting.id === selectedMeetingId ? 'selected' : ''}>${escapeHtml(`${date} - ${meeting.title}${taskLabel}`)}</option>`;
+      }).join('')}
+    `;
+  }
+
   function refreshDocumentArchiveMeetingSelect() {
     const categoryInput = document.getElementById('documentArchiveCategory');
     const field = document.getElementById('documentArchiveMeetingField');
@@ -1513,20 +1534,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const currentValue = select.value;
-    const meetings = getAllMeetingsForArchiveLinking();
-    select.innerHTML = `
-      <option value="">Tidak dikaitkan ke pertemuan</option>
-      ${meetings.map(meeting => {
-        const phaseLabel = meeting.phase ? meeting.phase.replace('tugas', 'Tugas ') : '';
-        const date = meeting.date ? formatWibDateOnly(meeting.date) : '-';
-        const taskLabel = meeting.task?.title ? ` - ${meeting.task.title}` : (phaseLabel ? ` - ${phaseLabel}` : '');
-        return `<option value="${escapeHtml(meeting.id)}">${escapeHtml(`${date} - ${meeting.title}${taskLabel}`)}</option>`;
-      }).join('')}
-    `;
-    if ([...select.options].some(option => option.value === currentValue)) {
-      select.value = currentValue;
-    }
+    select.innerHTML = buildDocumentArchiveMeetingOptions(select.value);
   }
 
   function ensureDocumentArchivesLoadedForMeetingCards() {
@@ -1562,6 +1570,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const mime = document.mimeType || '';
     const category = document.category || '';
     if (mime.includes('pdf')) return '📕';
+    if (category === 'poster') return '🧾';
     if (mime.startsWith('image/') || category === 'diagram_alur') return '🖼️';
     if (mime.includes('spreadsheet') || mime.includes('excel')) return '📊';
     if (mime.includes('presentation') || mime.includes('powerpoint')) return '📽️';
@@ -1595,6 +1604,100 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  function canEditDocumentArchive() {
+    return window.RBAC.can(window.capstoneStore.getCurrentUser(), 'documents', 'create');
+  }
+
+  async function openEditDocumentArchiveModal(documentId) {
+    if (!requirePermission('documents', 'create')) return;
+    const document = documentArchives.find(item => item.id === documentId);
+    if (!document) {
+      Swal.fire({ icon: 'error', title: 'Dokumen tidak ditemukan', text: 'Data arsip belum dapat dibuka.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+
+    const currentMeetingId = getDocumentArchiveMeetingId(document);
+    const categoryOptions = Object.entries(DOCUMENT_ARCHIVE_CATEGORIES).map(([value, label]) =>
+      `<option value="${escapeHtml(value)}" ${document.category === value ? 'selected' : ''}>${escapeHtml(label)}</option>`
+    ).join('');
+
+    const result = await Swal.fire({
+      title: 'Edit Dokumen Arsip',
+      width: 'min(680px, calc(100vw - 1.5rem))',
+      html: `
+        <div class="archive-edit-form">
+          <label class="form-label" for="archiveEditTitle">Judul Dokumen</label>
+          <input id="archiveEditTitle" class="form-input" value="${escapeHtml(document.title)}" maxlength="180" />
+
+          <label class="form-label" for="archiveEditCategory">Jenis Dokumen</label>
+          <select id="archiveEditCategory" class="form-input">${categoryOptions}</select>
+
+          <div id="archiveEditMeetingWrap">
+            <label class="form-label" for="archiveEditMeeting">Pertemuan Terkait</label>
+            <select id="archiveEditMeeting" class="form-input">${buildDocumentArchiveMeetingOptions(currentMeetingId)}</select>
+            <small class="form-help">Pilih pertemuan jika dokumen ini adalah berita acara.</small>
+          </div>
+
+          <label class="form-label" for="archiveEditDescription">Catatan Singkat</label>
+          <textarea id="archiveEditDescription" class="form-input" rows="4" maxlength="500">${escapeHtml(document.description || '')}</textarea>
+
+          <div class="form-help">File asli tetap sama. Untuk mengganti file, unggah dokumen baru ke arsip.</div>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Simpan Perubahan',
+      cancelButtonText: 'Batal',
+      confirmButtonColor: '#1E40AF',
+      didOpen: () => {
+        const categoryInput = document.getElementById('archiveEditCategory');
+        const meetingWrap = document.getElementById('archiveEditMeetingWrap');
+        const syncMeetingField = () => {
+          if (meetingWrap) meetingWrap.style.display = categoryInput?.value === 'berita_acara' ? 'grid' : 'none';
+        };
+        categoryInput?.addEventListener('change', syncMeetingField);
+        syncMeetingField();
+      },
+      preConfirm: () => {
+        const title = document.getElementById('archiveEditTitle')?.value.trim() || '';
+        const category = document.getElementById('archiveEditCategory')?.value || 'lainnya';
+        const description = document.getElementById('archiveEditDescription')?.value.trim() || '';
+        const meetingId = category === 'berita_acara' ? (document.getElementById('archiveEditMeeting')?.value || '') : '';
+        if (!title) {
+          Swal.showValidationMessage('Judul dokumen wajib diisi.');
+          return false;
+        }
+        return { title, category, description, meetingId };
+      }
+    });
+
+    if (!result.isConfirmed || !result.value) return;
+
+    const payload = result.value;
+    const updateResult = await window.capstoneStore.updateDocumentArchive(documentId, payload);
+    if (!updateResult?.ok) {
+      Swal.fire({ icon: 'error', title: 'Gagal menyimpan', text: 'Perubahan dokumen belum dapat disimpan.', confirmButtonColor: '#1E40AF' });
+      return;
+    }
+
+    window.capstoneStore.logAudit('Edit Arsip Dokumen', `Mengubah data dokumen "${payload.title}"`, {
+      actionTag: 'edit_document_archive',
+      object: { type: 'Arsip Dokumen', id: documentId, name: payload.title },
+      changes: [
+        { field: 'Judul', from: document.title, to: payload.title },
+        { field: 'Jenis', from: document.category, to: payload.category },
+        { field: 'Pertemuan Terkait', from: currentMeetingId || null, to: payload.meetingId || null }
+      ]
+    });
+
+    if (payload.meetingId) {
+      const linked = findMeetingForBeritaAcara(payload.meetingId);
+      window.capstoneStore.markMeetingBeritaAcara(linked.task?.id || '', payload.meetingId);
+    }
+
+    await loadDocumentArchives(true);
+    Swal.fire({ icon: 'success', title: 'Dokumen diperbarui', text: 'Data arsip dokumen sudah tersimpan.', timer: 1400, showConfirmButton: false });
+  }
+
   function renderDocumentArchives() {
     const list = document.getElementById('documentArchiveList');
     const count = document.getElementById('documentArchiveCount');
@@ -1623,6 +1726,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    const canEditArchive = canEditDocumentArchive();
+    const canDeleteArchive = window.RBAC.can(window.capstoneStore.getCurrentUser(), 'documents', 'delete');
     list.innerHTML = visibleDocuments.map(document => {
       const date = document.createdAt ? formatWibDateOnly(document.createdAt) : '-';
       const id = encodeURIComponent(document.id);
@@ -1644,16 +1749,43 @@ document.addEventListener('DOMContentLoaded', () => {
           ${meetingContext ? `<div class="flow-document-meta document-archive-meeting-meta">Pertemuan: ${escapeHtml(meetingLabel)}${isLatestMeetingArchive ? ' · Dipakai di card pertemuan' : ''}</div>` : ''}
           ${description ? `<p class="document-archive-description">${escapeHtml(description)}</p>` : ''}
         </div>
+        ${(canEditArchive || canDeleteArchive) ? `
+          <div class="document-archive-menu">
+            <button type="button" class="archive-card-menu-btn" data-menu-for="${id}" aria-label="Menu dokumen">⋯</button>
+            <div class="archive-card-menu" data-menu-id="${id}">
+              ${canEditArchive ? `<button type="button" class="edit-archive-doc-btn" data-document-id="${id}">Edit Dokumen</button>` : ''}
+              ${canDeleteArchive ? `<button type="button" class="delete-archive-doc-btn is-danger" data-document-id="${id}" data-document-title="${title}">Hapus Dokumen</button>` : ''}
+            </div>
+          </div>
+        ` : ''}
         <div class="flow-document-actions">
           <a class="btn btn-secondary" href="backend/api/index.php?resource=document-archives&id=${id}&view=1" target="_blank" rel="noopener">👁️ Lihat</a>
           <a class="btn btn-primary" href="backend/api/index.php?resource=document-archives&id=${id}&download=1">⬇️ Download</a>
-          <button type="button" class="btn btn-danger delete-archive-doc-btn" data-document-id="${id}" data-document-title="${title}">🗑 Hapus</button>
         </div>
       </article>`;
     }).join('');
 
+    list.querySelectorAll('.archive-card-menu-btn').forEach(button => {
+      button.addEventListener('click', event => {
+        event.stopPropagation();
+        const menu = button.closest('.document-archive-menu')?.querySelector('.archive-card-menu');
+        document.querySelectorAll('.archive-card-menu.is-open').forEach(openMenu => {
+          if (openMenu !== menu) openMenu.classList.remove('is-open');
+        });
+        menu?.classList.toggle('is-open');
+      });
+    });
+
+    list.querySelectorAll('.edit-archive-doc-btn').forEach(button => {
+      button.addEventListener('click', () => {
+        button.closest('.archive-card-menu')?.classList.remove('is-open');
+        openEditDocumentArchiveModal(decodeURIComponent(button.dataset.documentId));
+      });
+    });
+
     list.querySelectorAll('.delete-archive-doc-btn').forEach(button => {
       button.addEventListener('click', async () => {
+        button.closest('.archive-card-menu')?.classList.remove('is-open');
         if (!requirePermission('documents', 'delete')) return;
         const confirmed = await Swal.fire({
           icon: 'warning',

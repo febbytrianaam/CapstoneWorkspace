@@ -197,6 +197,49 @@ final class Repository
         ];
     }
 
+    public function updateDocumentArchive(string $id, array $data): array
+    {
+        $title = trim((string) ($data['title'] ?? ''));
+        $category = trim((string) ($data['category'] ?? 'lainnya'));
+        $description = trim((string) ($data['description'] ?? ''));
+        $meetingId = trim((string) ($data['meeting_id'] ?? $data['meetingId'] ?? ''));
+
+        if ($id === '' || $title === '') {
+            throw new InvalidArgumentException('Judul dokumen wajib diisi.');
+        }
+
+        $allowedCategories = ['berita_acara', 'surat_izin', 'surat_pernyataan', 'proposal_laporan', 'dokumen', 'diagram_alur', 'poster', 'lampiran', 'lainnya'];
+        if (!in_array($category, $allowedCategories, true)) {
+            $category = 'lainnya';
+        }
+
+        if ($category !== 'berita_acara') {
+            $meetingId = '';
+        }
+
+        $stmt = $this->db->prepare(
+            'UPDATE document_archives
+             SET title = :title, category = :category, description = :description, meeting_id = :meeting_id
+             WHERE id = :id'
+        );
+        $stmt->execute([
+            'id' => $id,
+            'title' => $title,
+            'category' => $category,
+            'description' => $description,
+            'meeting_id' => $meetingId !== '' ? $meetingId : null,
+        ]);
+
+        $updated = $this->documentArchives();
+        foreach ($updated as $document) {
+            if ($document['id'] === $id) {
+                return $document;
+            }
+        }
+
+        throw new RuntimeException('Dokumen arsip tidak ditemukan.');
+    }
+
     public function documentArchiveFile(string $id): array
     {
         $stmt = $this->db->prepare('SELECT * FROM document_archives WHERE id = :id LIMIT 1');
