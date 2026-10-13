@@ -46,6 +46,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let auditEndDate = '';
   let auditCurrentPage = 1;
   let auditPageSize = 10;
+  let activityUserFilter = 'SEMUA';
+  let activityTypeFilter = 'SEMUA';
 
   let modalChecklistState = [];
   let modalTaskCanUpdateProgress = false;
@@ -715,6 +717,11 @@ document.addEventListener('DOMContentLoaded', () => {
         await window.capstoneStore.syncFromBackend();
         await window.RBAC.loadFromBackend();
         activateAuthenticatedUi(window.capstoneStore.getCurrentUser() || payload.data);
+        trackUserActivity('Login', 'Masuk ke aplikasi.', {
+          activityTag: 'login',
+          page: 'auth',
+          target: { type: 'Sesi', id: payload.data.id, name: payload.data.name }
+        });
         loginForm.reset();
       } else if (loginError) {
         loginError.textContent = 'Username atau password salah.';
@@ -729,6 +736,12 @@ document.addEventListener('DOMContentLoaded', () => {
     logoutBtn?.addEventListener('click', async () => {
       document.getElementById('profileDropdown')?.classList.remove('active');
       document.getElementById('profileMenuBtn')?.setAttribute('aria-expanded', 'false');
+      const user = window.capstoneStore.getCurrentUser();
+      trackUserActivity('Logout', 'Keluar dari aplikasi.', {
+        activityTag: 'logout',
+        page: currentPage || '',
+        target: { type: 'Sesi', id: user?.id || '', name: user?.name || 'Pengguna' }
+      });
       await window.capstoneStore.logout();
       window.location.reload();
     });
@@ -912,10 +925,30 @@ document.addEventListener('DOMContentLoaded', () => {
     return VALID_PAGE_IDS.find(pageId => window.RBAC.canPage(user, pageId)) || null;
   }
 
+  function getPageLabel(pageId) {
+    if (pageId === 'dashboard') return 'Dasbor';
+    if (pageId === 'users') return 'Manajemen Pengguna';
+    if (pageId === 'audit') return 'Audit Log';
+    if (pageId === 'rbac') return 'RBAC';
+    if (pageId === 'flow') return 'Alur Kerja';
+    if (pageId === 'documents') return 'Arsip Dokumen';
+    return PHASE_META[pageId]?.short || pageId || '-';
+  }
+
+  function trackUserActivity(activity, details = '', extra = {}) {
+    const user = window.capstoneStore.getCurrentUser();
+    if (!user || !window.capstoneStore.logUserActivity) return;
+    window.capstoneStore.logUserActivity(activity, details, {
+      page: extra.page ?? currentPage ?? '',
+      ...extra
+    });
+  }
+
   function setPage(pageId, options = {}) {
     const requestedPage = VALID_PAGE_IDS.includes(pageId) ? pageId : 'dashboard';
     const currentUser = window.capstoneStore.getCurrentUser();
     const safePageId = window.RBAC.canPage(currentUser, requestedPage) ? requestedPage : getFallbackPage(currentUser);
+    const previousPage = currentPage;
 
     if (!safePageId) {
       currentPage = null;
@@ -971,6 +1004,13 @@ document.addEventListener('DOMContentLoaded', () => {
     applyRbacUi();
     if (options.restoreScroll !== false) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    if (previousPage !== safePageId) {
+      trackUserActivity('Buka Menu', `Membuka menu ${getPageLabel(safePageId)}.`, {
+        activityTag: 'open_menu',
+        page: safePageId,
+        target: { type: 'Menu', id: safePageId, name: getPageLabel(safePageId) }
+      });
     }
   }
 
@@ -1371,11 +1411,21 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="flow-document-meta">Diunggah oleh ${escapeHtml(document.uploadedBy || 'System')} · ${date}</div>
         </div>
         <div class="flow-document-actions">
-          <a class="btn btn-secondary" href="backend/guide-preview.php?id=${id}" target="_blank" rel="noopener">📖 Preview PDF</a>
+          <a class="btn btn-secondary view-guide-link" href="backend/guide-preview.php?id=${id}" target="_blank" rel="noopener" data-guide-id="${id}" data-guide-title="${escapeHtml(document.title)}">📖 Preview PDF</a>
           <button type="button" class="btn btn-danger delete-guide-btn" data-guide-id="${id}" data-guide-title="${escapeHtml(document.title)}">🗑 Hapus</button>
         </div>
       </article>`;
     }).join('');
+
+    list.querySelectorAll('.view-guide-link').forEach(link => {
+      link.addEventListener('click', () => {
+        trackUserActivity('Lihat Panduan', `Membuka panduan "${link.dataset.guideTitle || 'Dokumen panduan'}".`, {
+          activityTag: 'view_guide',
+          page: 'flow',
+          target: { type: 'Panduan', id: decodeURIComponent(link.dataset.guideId || ''), name: link.dataset.guideTitle || '' }
+        });
+      });
+    });
 
     list.querySelectorAll('.delete-guide-btn').forEach(button => {
       button.addEventListener('click', async () => {
@@ -1759,11 +1809,31 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         ` : ''}
         <div class="flow-document-actions">
-          <a class="btn btn-secondary" href="backend/api/index.php?resource=document-archives&id=${id}&view=1" target="_blank" rel="noopener">👁️ Lihat</a>
-          <a class="btn btn-primary" href="backend/api/index.php?resource=document-archives&id=${id}&download=1">⬇️ Download</a>
+          <a class="btn btn-secondary view-archive-doc-link" href="backend/api/index.php?resource=document-archives&id=${id}&view=1" target="_blank" rel="noopener" data-document-id="${id}" data-document-title="${title}">👁️ Lihat</a>
+          <a class="btn btn-primary download-archive-doc-link" href="backend/api/index.php?resource=document-archives&id=${id}&download=1" data-document-id="${id}" data-document-title="${title}">⬇️ Download</a>
         </div>
       </article>`;
     }).join('');
+
+    list.querySelectorAll('.view-archive-doc-link').forEach(link => {
+      link.addEventListener('click', () => {
+        trackUserActivity('Lihat Dokumen', `Membuka dokumen "${link.dataset.documentTitle || 'Arsip dokumen'}".`, {
+          activityTag: 'view_document',
+          page: 'documents',
+          target: { type: 'Arsip Dokumen', id: decodeURIComponent(link.dataset.documentId || ''), name: link.dataset.documentTitle || '' }
+        });
+      });
+    });
+
+    list.querySelectorAll('.download-archive-doc-link').forEach(link => {
+      link.addEventListener('click', () => {
+        trackUserActivity('Download Dokumen', `Mengunduh dokumen "${link.dataset.documentTitle || 'Arsip dokumen'}".`, {
+          activityTag: 'download_document',
+          page: 'documents',
+          target: { type: 'Arsip Dokumen', id: decodeURIComponent(link.dataset.documentId || ''), name: link.dataset.documentTitle || '' }
+        });
+      });
+    });
 
     list.querySelectorAll('.archive-card-menu-btn').forEach(button => {
       button.addEventListener('click', event => {
@@ -3384,6 +3454,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const clearBtn = document.getElementById('clearAuditBtn');
 
     if (!container) return;
+    renderUserActivityLogView();
 
     const users = window.capstoneStore.getUsers();
     let logs = window.capstoneStore.getAuditLogs();
@@ -3551,9 +3622,11 @@ document.addEventListener('DOMContentLoaded', () => {
         userCounts[l.user] = (userCounts[l.user] || 0) + 1;
         actionCounts[l.action] = (actionCounts[l.action] || 0) + 1;
       });
-      let topUser = Object.keys(userCounts).reduce((a, b) => userCounts[a] > userCounts[b] ? a : b, '-');
+      const userKeys = Object.keys(userCounts);
+      const actionKeys = Object.keys(actionCounts);
+      let topUser = userKeys.length ? userKeys.reduce((a, b) => userCounts[a] > userCounts[b] ? a : b) : '-';
       let topUserCount = topUser !== '-' ? userCounts[topUser] : 0;
-      let topAction = Object.keys(actionCounts).reduce((a, b) => actionCounts[a] > actionCounts[b] ? a : b, '-');
+      let topAction = actionKeys.length ? actionKeys.reduce((a, b) => actionCounts[a] > actionCounts[b] ? a : b) : '-';
       let topActionCount = topAction !== '-' ? actionCounts[topAction] : 0;
 
       kpiGrid.innerHTML = `
@@ -3825,6 +3898,114 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
     });
+  }
+
+  function renderUserActivityLogView() {
+    const container = document.getElementById('userActivityTableContainer');
+    const countBadge = document.getElementById('userActivityCountBadge');
+    const userSelect = document.getElementById('activityUserSelect');
+    const typeSelect = document.getElementById('activityTypeSelect');
+    const currentUser = window.capstoneStore.getCurrentUser();
+    if (!container || currentUser?.role !== 'superadmin') return;
+
+    let activities = typeof window.capstoneStore.getUserActivities === 'function'
+      ? window.capstoneStore.getUserActivities()
+      : [];
+    activities = Array.isArray(activities) ? activities : [];
+
+    const users = [...new Set(activities.map(item => item.user).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const types = [...new Set(activities.map(item => item.activity).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+    if (userSelect) {
+      userSelect.innerHTML = `
+        <option value="SEMUA" ${activityUserFilter === 'SEMUA' ? 'selected' : ''}>Semua Pengguna</option>
+        ${users.map(name => `<option value="${escapeHtml(name)}" ${activityUserFilter === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}
+      `;
+      userSelect.onchange = (event) => {
+        activityUserFilter = event.target.value || 'SEMUA';
+        renderUserActivityLogView();
+      };
+    }
+
+    if (typeSelect) {
+      typeSelect.innerHTML = `
+        <option value="SEMUA" ${activityTypeFilter === 'SEMUA' ? 'selected' : ''}>Semua Aktivitas</option>
+        ${types.map(type => `<option value="${escapeHtml(type)}" ${activityTypeFilter === type ? 'selected' : ''}>${escapeHtml(type)}</option>`).join('')}
+      `;
+      typeSelect.onchange = (event) => {
+        activityTypeFilter = event.target.value || 'SEMUA';
+        renderUserActivityLogView();
+      };
+    }
+
+    if (activityUserFilter !== 'SEMUA') {
+      activities = activities.filter(item => item.user === activityUserFilter);
+    }
+    if (activityTypeFilter !== 'SEMUA') {
+      activities = activities.filter(item => item.activity === activityTypeFilter);
+    }
+
+    activities = activities
+      .slice()
+      .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+
+    if (countBadge) countBadge.textContent = `${activities.length} aktivitas`;
+
+    if (!activities.length) {
+      container.innerHTML = `
+        <div class="flow-document-empty">Belum ada aktivitas pengguna yang sesuai dengan filter.</div>
+      `;
+      return;
+    }
+
+    const rowsHtml = activities.slice(0, 80).map(item => {
+      const target = item.target || {};
+      const targetName = target.name || target.id || '-';
+      const targetType = target.type || 'Target';
+      const deviceShort = item.device ? (item.device.length > 56 ? `${item.device.slice(0, 56)}...` : item.device) : '-';
+      return `
+        <tr class="audit-detail-row">
+          <td class="audit-td-time">
+            <div class="audit-date-primary">${escapeHtml(formatWibDateOnly(item.timestamp))}</div>
+            <div class="audit-date-secondary">${escapeHtml(formatWibClock(item.timestamp, true))}</div>
+          </td>
+          <td>
+            <div class="audit-actor-name">${escapeHtml(item.user || '-')}</div>
+            <div class="audit-actor-role">${escapeHtml(getRoleLabel({ role: item.role }))}</div>
+          </td>
+          <td>
+            <div class="audit-action-name">${escapeHtml(item.activity || 'Aktivitas')}</div>
+            <div class="audit-action-tag">${escapeHtml(item.activityTag || '-')}</div>
+          </td>
+          <td>
+            <div class="audit-object-name">${escapeHtml(targetName)}</div>
+            <div class="audit-object-meta">${escapeHtml(item.page || '-')} / ${escapeHtml(targetType)}</div>
+          </td>
+          <td>
+            <div class="activity-detail-text">${escapeHtml(item.details || '-')}</div>
+            <div class="audit-device-val">${escapeHtml(item.ip || '-')} · ${escapeHtml(deviceShort)}</div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    container.innerHTML = `
+      <div class="activity-log-table-wrap">
+        <table class="audit-detail-table activity-log-table">
+          <thead>
+            <tr>
+              <th class="audit-th-time">Waktu</th>
+              <th class="audit-th-actor">Pengguna</th>
+              <th class="audit-th-action">Aktivitas</th>
+              <th class="audit-th-object">Menu / Target</th>
+              <th class="audit-th-changes">Detail</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      ${activities.length > 80 ? `<div class="activity-log-note">Menampilkan 80 aktivitas terbaru dari filter ini.</div>` : ''}
+    `;
   }
 
   /* ==========================================
@@ -4613,6 +4794,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!task || !taskModalBackdrop) return;
     if (!canReadTaskDetails(task, currentUser)) return;
 
+    trackUserActivity('Buka Detail Tugas', `Membuka detail tugas "${task.title}".`, {
+      activityTag: 'open_task_detail',
+      page: task.phase || currentPage || '',
+      target: { type: 'Tugas', id: task.id, name: task.title }
+    });
+
     const isArchived = Boolean(task.archivedAt);
     const canUpdateProgress = canUpdateTaskProgress(task, currentUser) && !isArchived;
     const canManageStructure = canManageTaskStructure(task, currentUser) && !isArchived;
@@ -4806,6 +4993,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.capstoneStore.update(taskId, reviewPayload);
+    const activityByAction = {
+      submit: 'Ajukan Review',
+      cancel_submit: 'Batalkan Ajuan Review',
+      approve: 'Setujui Review',
+      request_revision: 'Minta Revisi'
+    };
+    trackUserActivity(activityByAction[reviewAction] || 'Aksi Review', `${actionLabel} Tugas: "${task.title}".`, {
+      activityTag: `review_${reviewAction}`,
+      page: task.phase || currentPage || '',
+      target: { type: 'Tugas', id: task.id, name: task.title }
+    });
 
     closeTaskModal();
     renderCurrentView();

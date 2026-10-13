@@ -17,6 +17,7 @@ final class Repository
         $repository->ensureTaskArchiveColumn();
         $repository->ensureTaskWorkflowColumns();
         $repository->ensureNotificationTargetColumn();
+        $repository->ensureUserActivityLogsTable();
         $repository->ensurePhaseProgressNotesTable();
         $repository->ensureUtcTimestampMigration();
         $repository->ensureRbacTable();
@@ -276,7 +277,8 @@ final class Repository
             'meetings' => $canSeeMeetings ? $this->generalMeetings() : [],
             'progressNotes' => $this->phaseProgressNotes(),
             'notifications' => $this->notifications($currentUser),
-            'auditLogs' => in_array($currentUser['role'] ?? 'member', ['superadmin', 'koordinator'], true) ? $this->auditLogs() : [],
+            'auditLogs' => ($currentUser['role'] ?? 'member') === 'superadmin' ? $this->auditLogs() : [],
+            'userActivities' => ($currentUser['role'] ?? 'member') === 'superadmin' ? $this->userActivityLogs() : [],
         ];
     }
 
@@ -831,6 +833,64 @@ final class Repository
         $this->db->exec('DELETE FROM audit_logs');
     }
 
+    public function userActivityLogs(): array
+    {
+        $rows = $this->db->query(
+            'SELECT * FROM user_activity_logs ORDER BY occurred_at DESC, id DESC LIMIT 500'
+        )->fetchAll();
+
+        return array_map(fn (array $row): array => [
+            'id' => $row['id'],
+            'timestamp' => strtotime($row['occurred_at']) * 1000,
+            'user' => $row['user_name'],
+            'role' => $row['role'],
+            'activity' => $row['activity'],
+            'activityTag' => $row['activity_tag'],
+            'page' => $row['page_name'] ?? '',
+            'target' => [
+                'type' => $row['target_type'] ?? '',
+                'id' => $row['target_id'] ?? '',
+                'name' => $row['target_name'] ?? '',
+            ],
+            'details' => $row['details'] ?? '',
+            'ip' => $row['ip'] ?? '',
+            'device' => $row['device'] ?? '',
+        ], $rows);
+    }
+
+    public function createUserActivityLog(array $data): array
+    {
+        $id = $data['id'] ?? ('ua-' . str_replace('.', '', uniqid('', true)) . '-' . random_int(100, 999));
+        $timestamp = isset($data['timestamp']) ? date('Y-m-d H:i:s', (int) ($data['timestamp'] / 1000)) : date('Y-m-d H:i:s');
+        $target = is_array($data['target'] ?? null) ? $data['target'] : [];
+        $sessionName = (string) ($_SESSION['capstone_user_name'] ?? ($data['user'] ?? 'System'));
+        $sessionRole = (string) ($_SESSION['capstone_user_role'] ?? ($data['role'] ?? 'system'));
+
+        $stmt = $this->db->prepare(
+            'INSERT INTO user_activity_logs
+             (id, occurred_at, user_name, role, activity, activity_tag, page_name, target_type, target_id, target_name, details, ip, device)
+             VALUES (:id, :occurred_at, :user_name, :role, :activity, :activity_tag, :page_name, :target_type, :target_id, :target_name, :details, :ip, :device)
+             ON DUPLICATE KEY UPDATE id = VALUES(id)'
+        );
+        $stmt->execute([
+            'id' => $id,
+            'occurred_at' => $timestamp,
+            'user_name' => $sessionName,
+            'role' => $sessionRole,
+            'activity' => $data['activity'] ?? 'Aktivitas Pengguna',
+            'activity_tag' => $data['activityTag'] ?? strtolower(str_replace(' ', '_', $data['activity'] ?? 'aktivitas_pengguna')),
+            'page_name' => $data['page'] ?? null,
+            'target_type' => $target['type'] ?? null,
+            'target_id' => $target['id'] ?? null,
+            'target_name' => $target['name'] ?? null,
+            'details' => $data['details'] ?? '',
+            'ip' => $data['ip'] ?? ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'),
+            'device' => $data['device'] ?? ($_SERVER['HTTP_USER_AGENT'] ?? 'Browser'),
+        ]);
+
+        return $data + ['id' => $id, 'user' => $sessionName, 'role' => $sessionRole];
+    }
+
     public function taskById(string $id): array
     {
         $stmt = $this->db->prepare('SELECT * FROM tasks WHERE id = :id');
@@ -1172,6 +1232,31 @@ final class Repository
         if (!in_array('idx_notifications_target', $indexNames, true)) {
             $this->db->exec('ALTER TABLE notifications ADD INDEX idx_notifications_target (target_user_name, is_read, occurred_at)');
         }
+    }
+
+    private function ensureUserActivityLogsTable(): void
+    {
+        $this->db->exec(
+            'CREATE TABLE IF NOT EXISTS user_activity_logs (
+                id VARCHAR(100) PRIMARY KEY,
+                occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                user_name VARCHAR(120) NOT NULL,
+                role VARCHAR(40) NOT NULL,
+                activity VARCHAR(120) NOT NULL,
+                activity_tag VARCHAR(120) NOT NULL,
+                page_name VARCHAR(80) NULL,
+                target_type VARCHAR(80) NULL,
+                target_id VARCHAR(120) NULL,
+                target_name VARCHAR(255) NULL,
+                details TEXT NULL,
+                ip VARCHAR(80) NULL,
+                device VARCHAR(255) NULL,
+                INDEX idx_user_activity_time (occurred_at),
+                INDEX idx_user_activity_user (user_name, occurred_at),
+                INDEX idx_user_activity_tag (activity_tag, occurred_at),
+                INDEX idx_user_activity_page (page_name, occurred_at)
+            ) ENGINE=InnoDB'
+        );
     }
 
     private function ensurePhaseProgressNotesTable(): void

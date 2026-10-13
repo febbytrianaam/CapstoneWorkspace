@@ -13,7 +13,7 @@
       audit: { read: true, create: true, manage: true }
     },
     koordinator: {
-      pages: { dashboard: true, tugas1: true, tugas2: true, tugas3: true, flow: true, documents: true, users: false, audit: true, rbac: false },
+      pages: { dashboard: true, tugas1: true, tugas2: true, tugas3: true, flow: true, documents: true, users: false, audit: false, rbac: false },
       widgets: { personal: true, stats: true, charts: true, attention: true, meetings: true, workload: true },
       tasks: { create: true, read: true, update: true, delete: true },
       users: { create: false, read: true, update: false, delete: false },
@@ -21,7 +21,7 @@
       guides: { create: true, read: true, delete: true },
       documents: { create: false, read: true, delete: false },
       beritaAcara: { create: true, read: true, update: true, delete: false },
-      audit: { read: true, create: true, manage: false }
+      audit: { read: false, create: true, manage: false }
     },
     member: {
       pages: { dashboard: false, tugas1: true, tugas2: true, tugas3: true, flow: true, documents: true, users: false, audit: false, rbac: false },
@@ -108,9 +108,15 @@
       persistToBackend(role, area, permission, value);
     },
     can(user, area, action) {
+      if (area === 'audit' && action === 'read') {
+        return roleOf(user) === 'superadmin';
+      }
       return Boolean(MATRIX[roleOf(user)]?.[area]?.[action]);
     },
     canPage(user, page) {
+      if (page === 'audit') {
+        return roleOf(user) === 'superadmin';
+      }
       return Boolean(MATRIX[roleOf(user)]?.pages?.[page]);
     },
     canWidget(user, widget) {

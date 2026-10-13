@@ -33,10 +33,12 @@ Default koneksi:
 
 ## Matrix RBAC
 
-- `superadmin`: akses penuh dashboard, CRUD tugas/pengguna/pertemuan, berita acara, dan audit.
-- `koordinator`: CRUD tugas dan pertemuan, baca pengguna/audit, serta buat berita acara.
+- `superadmin`: akses penuh dashboard, CRUD tugas/pengguna/pertemuan, berita acara, audit, dan aktivitas pengguna.
+- `koordinator`: CRUD tugas dan pertemuan, baca pengguna, serta buat berita acara. Menu audit hanya untuk superadmin.
 - `member`: baca dashboard/tugas/pertemuan, ubah progres tugas, dan tidak dapat menghapus data atau membuka menu pengguna/audit.
 - `GET backend/api/index.php?resource=audit-logs`
 - `POST backend/api/index.php?resource=audit-logs` untuk menyimpan aktivitas dari frontend ke MySQL
 - `DELETE backend/api/index.php?resource=audit-logs` untuk mengosongkan log audit
+- `GET backend/api/index.php?resource=user-activities` hanya untuk superadmin
+- `POST backend/api/index.php?resource=user-activities` untuk mencatat buka menu dan klik aksi penting
 

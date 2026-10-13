@@ -9,6 +9,7 @@ const AUTH_KEY = 'capstone_auth_v1';
 const USERS_LIST_KEY = 'capstone_users_list_v3';
 const NOTIFS_KEY = 'capstone_notifications_v3';
 const AUDIT_LOGS_KEY = 'capstone_audit_logs_v3';
+const USER_ACTIVITIES_KEY = 'capstone_user_activities_v1';
 const MEETINGS_KEY = 'capstone_general_meetings_v1';
 const PROGRESS_NOTES_KEY = 'capstone_progress_notes_v1';
 const API_BASE = window.CAPSTONE_API_BASE || 'backend/api/index.php';
@@ -509,6 +510,7 @@ class DataStore {
     this.tasks = offlineMode ? this.loadTasks() : [];
     this.notifications = offlineMode ? this.loadNotifications() : [];
     this.auditLogs = offlineMode ? this.loadAuditLogs() : [];
+    this.userActivities = offlineMode ? this.loadUserActivities() : [];
     this.meetings = offlineMode ? this.loadGeneralMeetings() : [];
     this.progressNotes = offlineMode ? this.loadProgressNotes() : {};
     this.currentUser = this.loadUser();
@@ -541,6 +543,7 @@ class DataStore {
       this.tasks = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
       this.notifications = Array.isArray(snapshot.notifications) ? snapshot.notifications : [];
       this.auditLogs = Array.isArray(snapshot.auditLogs) ? snapshot.auditLogs : [];
+      this.userActivities = Array.isArray(snapshot.userActivities) ? snapshot.userActivities : [];
       this.meetings = Array.isArray(snapshot.meetings) ? snapshot.meetings : this.meetings;
       this.progressNotes = snapshot.progressNotes && typeof snapshot.progressNotes === 'object' ? snapshot.progressNotes : {};
 
@@ -550,6 +553,7 @@ class DataStore {
       this.saveUsers();
       this.saveNotifications();
       this.saveAuditLogs();
+      this.saveUserActivities();
       this.saveMeetings();
       this.saveProgressNotes();
       if (this.currentUser) this.setAuthenticatedUser(this.currentUser);
@@ -788,6 +792,46 @@ class DataStore {
     this.auditLogs = [];
     this.saveAuditLogs();
     this.sendToBackend('audit-logs', 'DELETE');
+  }
+
+  loadUserActivities() {
+    const raw = localStorage.getItem(USER_ACTIVITIES_KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  saveUserActivities() {
+    localStorage.setItem(USER_ACTIVITIES_KEY, JSON.stringify(this.userActivities || []));
+  }
+
+  getUserActivities() {
+    return this.userActivities || [];
+  }
+
+  logUserActivity(activity, details = '', extra = {}) {
+    const activeUser = this.currentUser || { name: 'System', role: 'member' };
+    const newActivity = {
+      id: 'ua-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+      timestamp: Date.now(),
+      user: activeUser.name,
+      role: activeUser.role,
+      activity,
+      activityTag: extra.activityTag || activity.toLowerCase().replace(/\s+/g, '_'),
+      page: extra.page || '',
+        target: extra.target || {},
+      details,
+      ip: extra.ip || '',
+      device: extra.device || navigator.userAgent || 'Browser'
+    };
+    this.userActivities = [newActivity, ...(this.userActivities || [])].slice(0, 500);
+    this.saveUserActivities();
+    this.sendToBackend('user-activities', 'POST', newActivity);
+    return newActivity;
   }
 
   /* ==========================================
@@ -1317,6 +1361,7 @@ class DataStore {
       tasks: this.tasks,
       notifications: this.notifications,
       auditLogs: this.auditLogs,
+      userActivities: this.userActivities || [],
       meetings: this.meetings,
       progressNotes: this.progressNotes
     };

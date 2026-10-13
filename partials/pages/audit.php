@@ -62,4 +62,23 @@
           <div id="auditTableContainer"></div>
           <div id="auditPrintContainer" class="print-only"></div>
         </div>
+
+        <div class="card-box activity-log-card">
+          <div class="card-box-header">
+            <div>
+              <h2>Aktivitas Pengguna</h2>
+              <div class="card-box-subtitle">Ringkasan menu yang dibuka dan aksi penting yang dilakukan pengguna.</div>
+            </div>
+            <span id="userActivityCountBadge" class="column-count">0 aktivitas</span>
+          </div>
+
+          <div class="toolbar activity-toolbar">
+            <div class="search-filter-group">
+              <select id="activityUserSelect" class="select-filter"></select>
+              <select id="activityTypeSelect" class="select-filter"></select>
+            </div>
+          </div>
+
+          <div id="userActivityTableContainer"></div>
+        </div>
       </section>

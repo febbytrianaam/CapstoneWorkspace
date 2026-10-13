@@ -4008,6 +4008,47 @@ body.sidebar-collapsed .theme-toggle-btn {
   font-weight: 400;
 }
 
+.activity-log-card {
+  margin-top: 1.25rem;
+}
+
+.activity-toolbar {
+  margin: 0 0 0.85rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.activity-log-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.activity-log-table td {
+  vertical-align: top;
+}
+
+.activity-detail-text {
+  color: var(--text-main);
+  font-size: 0.775rem;
+  line-height: 1.45;
+  margin-bottom: 0.25rem;
+}
+
+.activity-log-note {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .activity-toolbar .search-filter-group,
+  .activity-toolbar .select-filter {
+    width: 100%;
+  }
+}
+
 /* Modal Unified Checklist Builder */
 .modal-checklist-builder {
   display: flex;

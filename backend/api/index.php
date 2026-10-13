@@ -117,9 +117,9 @@ try {
     if ($resource !== 'auth') {
         $role = $currentUser['role'];
         $permissions = [
-            'superadmin' => ['tasks' => ['GET', 'POST', 'PUT', 'DELETE'], 'meetings' => ['GET', 'POST', 'PUT', 'DELETE'], 'users' => ['GET', 'POST', 'PUT', 'DELETE'], 'audit-logs' => ['GET', 'POST', 'DELETE'], 'snapshot' => ['GET'], 'rbac' => ['GET', 'POST'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET', 'POST', 'DELETE'], 'document-archives' => ['GET', 'POST', 'PUT', 'DELETE'], 'progress-notes' => ['GET', 'PUT']],
-            'koordinator' => ['tasks' => ['GET', 'POST', 'PUT', 'DELETE'], 'meetings' => ['GET', 'POST', 'PUT', 'DELETE'], 'users' => ['GET'], 'audit-logs' => ['GET', 'POST'], 'snapshot' => ['GET'], 'rbac' => ['GET'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET', 'POST', 'DELETE'], 'document-archives' => ['GET'], 'progress-notes' => ['GET']],
-            'member' => ['tasks' => ['GET', 'PUT'], 'meetings' => [], 'users' => [], 'audit-logs' => ['POST'], 'snapshot' => ['GET'], 'rbac' => ['GET'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET'], 'document-archives' => ['GET'], 'progress-notes' => ['GET']],
+            'superadmin' => ['tasks' => ['GET', 'POST', 'PUT', 'DELETE'], 'meetings' => ['GET', 'POST', 'PUT', 'DELETE'], 'users' => ['GET', 'POST', 'PUT', 'DELETE'], 'audit-logs' => ['GET', 'POST', 'DELETE'], 'user-activities' => ['GET', 'POST'], 'snapshot' => ['GET'], 'rbac' => ['GET', 'POST'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET', 'POST', 'DELETE'], 'document-archives' => ['GET', 'POST', 'PUT', 'DELETE'], 'progress-notes' => ['GET', 'PUT']],
+            'koordinator' => ['tasks' => ['GET', 'POST', 'PUT', 'DELETE'], 'meetings' => ['GET', 'POST', 'PUT', 'DELETE'], 'users' => ['GET'], 'audit-logs' => ['POST'], 'user-activities' => ['POST'], 'snapshot' => ['GET'], 'rbac' => ['GET'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET', 'POST', 'DELETE'], 'document-archives' => ['GET'], 'progress-notes' => ['GET']],
+            'member' => ['tasks' => ['GET', 'PUT'], 'meetings' => [], 'users' => [], 'audit-logs' => ['POST'], 'user-activities' => ['POST'], 'snapshot' => ['GET'], 'rbac' => ['GET'], 'notifications' => ['GET', 'POST', 'PUT'], 'guides' => ['GET'], 'document-archives' => ['GET'], 'progress-notes' => ['GET']],
         ];
         if (!isset($permissions[$role]) || !in_array($method, $permissions[$role][$resource] ?? [], true)) {
             Response::error('Role tidak memiliki permission untuk endpoint ini.', 403);
@@ -492,6 +492,14 @@ try {
     if ($resource === 'audit-logs' && $method === 'DELETE') {
         $repo->clearAuditLogs();
         Response::json(['ok' => true]);
+    }
+
+    if ($resource === 'user-activities' && $method === 'GET') {
+        Response::json(['ok' => true, 'data' => $repo->userActivityLogs()]);
+    }
+
+    if ($resource === 'user-activities' && $method === 'POST') {
+        Response::json(['ok' => true, 'data' => $repo->createUserActivityLog($input)], 201);
     }
 
     Response::error('Endpoint tidak ditemukan.', 404);
