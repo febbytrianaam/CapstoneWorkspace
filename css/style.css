@@ -1783,6 +1783,30 @@ body.sidebar-collapsed .theme-toggle-btn {
   margin-bottom: 0.55rem;
 }
 
+.card-title-stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.task-card-code {
+  align-self: flex-start;
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--ut-blue-soft);
+  border: 1px solid var(--ut-blue-medium);
+  color: var(--ut-blue-primary);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
+  word-break: break-word;
+}
+
 .card-title {
   font-size: 0.875rem;
   font-weight: 500;
@@ -1818,6 +1842,12 @@ body.sidebar-collapsed .theme-toggle-btn {
   background: var(--priority-low-bg);
   color: var(--priority-low-text);
   border-color: var(--priority-low-border);
+}
+
+[data-theme="dark"] .task-card-code {
+  background: rgba(37, 99, 235, 0.16);
+  border-color: rgba(147, 197, 253, 0.35);
+  color: #bfdbfe;
 }
 
 .card-description {

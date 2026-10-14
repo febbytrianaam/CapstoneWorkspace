@@ -2,7 +2,7 @@
 
 ## What Shipped
 
-Dashboard summaries, personal task cards, phase progress, workload summaries, Kanban task boards, task detail modal, checklist handling, priority/status labels, and archive-aware task behavior shipped.
+Dashboard summaries, personal task cards, phase progress, workload summaries, Kanban task boards, task detail modal, checklist handling, priority/status labels, visible task codes, and archive-aware task behavior shipped.
 
 ## What Changed From The Plan
 
@@ -33,6 +33,7 @@ Historical test record is incomplete. Current recommended checks:
 - Dashboard refresh behavior was fixed after user feedback.
 - Mobile card density and modal scrolling were adjusted.
 - Completed tasks were removed from active personal dashboard display.
+- Kanban cards now show each task code/id, such as `t2-dev-03`, directly above the task title so tasks can be referenced clearly during review or comparison.
 
 ## Known Limitations
 

@@ -9,7 +9,7 @@ header('Expires: 0');
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ruang Kerja Capstone — Universitas Terbuka</title>
-  <link rel="stylesheet" href="css/style.css?v=20261013-user-activity-1" />
+  <link rel="stylesheet" href="css/style.css?v=20261014-task-code-1" />
 </head>
 <body>
 
@@ -48,8 +48,8 @@ header('Expires: 0');
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="js/rbac.js?v=20261013-user-activity-1"></script>
-  <script src="js/data.js?v=20261013-user-activity-1"></script>
-  <script src="js/app.js?v=20261013-user-activity-1"></script>
+  <script src="js/rbac.js?v=20261014-task-code-1"></script>
+  <script src="js/data.js?v=20261014-task-code-1"></script>
+  <script src="js/app.js?v=20261014-task-code-1"></script>
 </body>
 </html>

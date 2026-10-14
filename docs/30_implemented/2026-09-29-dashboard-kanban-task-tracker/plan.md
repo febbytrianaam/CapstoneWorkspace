@@ -10,7 +10,7 @@ Build the main task tracking experience for Tugas 1, Tugas 2, and Tugas 3 using 
 - Show personal assigned tasks.
 - Show phase progress and workload summaries.
 - Render Kanban columns by task status.
-- Support task details, checklist, PIC, priority, dates, and archive metadata.
+- Support task details, checklist, PIC, priority, dates, task code/id, and archive metadata.
 
 ## Non-Goals
 
@@ -23,12 +23,14 @@ Build the main task tracking experience for Tugas 1, Tugas 2, and Tugas 3 using 
 - Render dashboard from task and user data in `js/app.js`.
 - Render phase pages from `partials/pages/phase-placeholders.php`.
 - Use task cards and modal detail editor.
+- Show each task code/id directly on the Kanban card.
 - Keep completed/archive behavior role-aware.
 
 ## Test Plan
 
 - Verify dashboard loads after login.
 - Verify task cards appear in the correct phase/status columns.
+- Verify task cards show their task code/id without crowding priority and review badges.
 - Verify task modal opens.
 - Verify member read-only restrictions for non-PIC tasks.
 - Verify superadmin can manage task structure.

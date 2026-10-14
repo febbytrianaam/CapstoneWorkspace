@@ -3223,7 +3223,10 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="task-card ${isReadonlyProgress ? 'is-readonly-progress' : ''} ${isArchived ? 'is-archived' : ''}" draggable="${canUpdate && !isArchived ? 'true' : 'false'}" data-task-id="${t.id}" style="${isMine ? 'border-color: var(--ut-blue-primary);' : ''}">
         <div class="task-priority-indicator" style="background: ${priorityColors[t.priority] || 'transparent'}"></div>
         <div class="card-header-row">
-          <div class="card-title">${escapeHtml(t.title)}</div>
+          <div class="card-title-stack">
+            <span class="task-card-code">${escapeHtml(t.id || '-')}</span>
+            <div class="card-title">${escapeHtml(t.title)}</div>
+          </div>
           <div style="display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap; justify-content:flex-end;">
             ${isArchived ? '<span class="task-archive-badge">Arsip</span>' : ''}
             ${isReadonlyProgress ? '<span class="task-readonly-badge">Hanya lihat</span>' : ''}
