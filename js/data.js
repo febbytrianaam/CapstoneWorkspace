@@ -13,6 +13,16 @@ const USER_ACTIVITIES_KEY = 'capstone_user_activities_v1';
 const MEETINGS_KEY = 'capstone_general_meetings_v1';
 const PROGRESS_NOTES_KEY = 'capstone_progress_notes_v1';
 const API_BASE = window.CAPSTONE_API_BASE || 'backend/api/index.php';
+const LEGACY_WORK_KEYS = [STORAGE_KEY, MEETINGS_KEY, PROGRESS_NOTES_KEY, NOTIFS_KEY, AUDIT_LOGS_KEY, USER_ACTIVITIES_KEY, 'capstone_berita_acara_drafts_v1'];
+
+function saveCache(key, value) {
+  if (window.location.protocol !== 'file:' && [...LEGACY_WORK_KEYS, USERS_LIST_KEY].includes(key)) return;
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    console.info('Cache perangkat tidak tersedia; data tetap disimpan di server.');
+  }
+}
 
 // Fallback offline non-sensitif. Data asli selalu diambil dari backend setelah login.
 const DEFAULT_USERS = {
@@ -514,15 +524,26 @@ class DataStore {
     this.meetings = offlineMode ? this.loadGeneralMeetings() : [];
     this.progressNotes = offlineMode ? this.loadProgressNotes() : {};
     this.currentUser = this.loadUser();
+    this.lastSyncedAt = null;
+    this.syncError = '';
+    this.auditLoaded = false;
+    this.legacyEntries = {};
+    for (const key of LEGACY_WORK_KEYS) {
+      const raw = localStorage.getItem(key);
+      if (raw !== null) this.legacyEntries[key] = raw;
+    }
+    this.legacyRecovery = null;
+    this.legacyStorageReady = Promise.resolve();
     // Database menjadi sumber utama untuk aplikasi login. Fallback seed hanya aktif saat file dibuka langsung.
     this.ready = this.syncFromBackend();
   }
 
   async syncFromBackend() {
-    if (window.location.protocol === 'file:') return;
+    if (window.location.protocol === 'file:') return { ok: true };
 
     try {
-      const response = await fetch(`${API_BASE}?resource=snapshot`, {
+      const response = await fetch(`${API_BASE}?resource=snapshot&include_logs=0`, {
+        cache: 'no-store',
         credentials: 'same-origin',
         headers: {
           Accept: 'application/json'
@@ -531,19 +552,24 @@ class DataStore {
       if (response.status === 401) {
         this.clearAuthenticatedUser();
         window.dispatchEvent(new CustomEvent('capstone:auth-required'));
-        return;
+        return { ok: false, message: 'Sesi berakhir. Silakan masuk kembali.' };
       }
-      if (!response.ok) return;
+      if (!response.ok) throw new Error('Data belum dapat diperbarui. Coba lagi sebentar.');
 
       const payload = await response.json();
-      if (!payload.ok || !payload.data) return;
+      if (!payload.ok || !payload.data) throw new Error('Data dari server belum dapat dibaca.');
 
       const snapshot = payload.data;
+      if (this.currentUser?.id !== snapshot.currentUser?.id || snapshot.currentUser?.role !== 'superadmin') {
+        this.auditLogs = [];
+        this.userActivities = [];
+        this.auditLoaded = false;
+      }
       this.users = snapshot.users && typeof snapshot.users === 'object' ? snapshot.users : {};
       this.tasks = Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
       this.notifications = Array.isArray(snapshot.notifications) ? snapshot.notifications : [];
-      this.auditLogs = Array.isArray(snapshot.auditLogs) ? snapshot.auditLogs : [];
-      this.userActivities = Array.isArray(snapshot.userActivities) ? snapshot.userActivities : [];
+      if (Array.isArray(snapshot.auditLogs)) this.auditLogs = snapshot.auditLogs;
+      if (Array.isArray(snapshot.userActivities)) this.userActivities = snapshot.userActivities;
       this.meetings = Array.isArray(snapshot.meetings) ? snapshot.meetings : this.meetings;
       this.progressNotes = snapshot.progressNotes && typeof snapshot.progressNotes === 'object' ? snapshot.progressNotes : {};
 
@@ -557,11 +583,103 @@ class DataStore {
       this.saveMeetings();
       this.saveProgressNotes();
       if (this.currentUser) this.setAuthenticatedUser(this.currentUser);
-
+      this.lastSyncedAt = Date.now();
+      this.syncError = '';
       window.dispatchEvent(new CustomEvent('capstone:data-synced'));
+      if (!this.legacyRecovery || this.legacyRecovery.userId !== this.currentUser?.id || this.legacyRecovery.error) {
+        this.legacyStorageReady = this.recoverLegacyStorage(Boolean(this.legacyRecovery?.error));
+      }
+      return { ok: true };
     } catch (e) {
-      console.info('Backend belum tersedia, memakai data lokal cadangan.', e);
+      this.syncError = e.message || 'Server tidak dapat dihubungi.';
+      return { ok: false, message: this.syncError };
     }
+  }
+
+  async commitToBackend(resource, method, body = null, params = {}) {
+    if (window.location.protocol === 'file:') return null;
+    const result = await this.sendToBackend(resource, method, body, params);
+    if (!result?.ok) throw new Error(result?.message || 'Perubahan belum tersimpan. Periksa koneksi lalu coba lagi.');
+    if (method !== 'DELETE' && (!result.data || typeof result.data !== 'object')) throw new Error('Konfirmasi data dari server belum dapat dibaca. Perbarui data sebelum mencoba kembali.');
+    return result.data;
+  }
+
+  async recoverLegacyStorage(force = false) {
+    const user = this.currentUser;
+    if (window.location.protocol === 'file:' || !['superadmin', 'koordinator'].includes(user?.role) || !Object.keys(this.legacyEntries).length) return null;
+    if (!force && this.legacyRecovery?.userId === user.id) return this.legacyRecovery;
+    const result = { userId: user.id, loading: true, backupId: '', error: '', saved: 0, conflicts: [], unresolved: [] };
+    this.legacyRecovery = result;
+    try {
+      const backup = await this.sendToBackend('browser-backups', 'POST', { entries: this.legacyEntries });
+      if (!backup?.ok || !backup.data?.id) throw new Error('Cadangan data browser belum tersimpan. Salinan di perangkat tetap dipertahankan.');
+      if (this.currentUser?.id !== user.id) return null;
+      result.backupId = backup.data.id;
+      const imported = await this.sendToBackend('ba-drafts', 'POST', { backupId: result.backupId });
+      if (!imported?.ok) throw new Error('Cadangan sudah tersimpan, tetapi pemulihan draft belum selesai.');
+      Object.assign(result, imported.data);
+    } catch (error) {
+      result.error = error.message;
+    } finally {
+      result.loading = false;
+      if (this.currentUser?.id === user.id) window.dispatchEvent(new CustomEvent('capstone:legacy-recovered'));
+    }
+    return result;
+  }
+
+  async getBeritaAcaraDraft(meetingId) {
+    const userId = this.currentUser?.id;
+    await this.legacyStorageReady;
+    const result = await this.sendToBackend('ba-drafts', 'GET', null, { meeting_id: meetingId });
+    if (!userId || this.currentUser?.id !== userId) throw new Error('Sesi telah berubah.');
+    if (!result?.ok) throw new Error(result?.message || 'Draft belum dapat dimuat. Silakan coba lagi.');
+    if (result.data !== null && (!result.data?.payload || !Number.isInteger(result.data.revision) || result.data.revision < 1)) throw new Error('Draft dari server belum dapat dibaca. Silakan muat ulang.');
+    return result.data;
+  }
+
+  async saveBeritaAcaraDraft(meetingId, payload, revision) {
+    const userId = this.currentUser?.id;
+    const result = await this.sendToBackend('ba-drafts', 'PUT', { payload, revision }, { meeting_id: meetingId });
+    if (!userId || this.currentUser?.id !== userId) throw new Error('Sesi telah berubah.');
+    if (!result?.ok || !result.data?.payload || !Number.isInteger(result.data.revision)) {
+      const error = new Error(result?.message || 'Draft belum tersimpan. Input Anda tetap tersedia.');
+      error.conflict = Boolean(result?.conflict);
+      error.currentDraft = result?.data || null;
+      throw error;
+    }
+    return result.data;
+  }
+
+  async getBrowserBackups(id = '') {
+    const result = await this.sendToBackend('browser-backups', 'GET', null, id ? { id } : {});
+    if (!result?.ok) throw new Error(result?.message || 'Cadangan browser belum dapat dimuat.');
+    return result.data;
+  }
+
+  async getPhaseAccess(phase) {
+    if (!['tugas1', 'tugas2', 'tugas3'].includes(phase)) throw new Error('Tahap tugas tidak valid.');
+    const userId = this.currentUser?.id;
+    if (!userId) throw new Error('Silakan masuk kembali.');
+    if (window.location.protocol === 'file:') return { members: [], serverTime: Date.now() };
+    await this.activityWrite;
+    const payload = await this.sendToBackend('phase-access', 'GET', null, { phase });
+    if (this.currentUser?.id !== userId) throw new Error('Sesi telah berubah.');
+    if (!payload?.ok || !Array.isArray(payload.data?.members) || !Number.isFinite(payload.data.serverTime)) throw new Error('Akses terakhir tim belum dapat dimuat. Silakan perbarui kembali.');
+    return payload.data;
+  }
+
+  async fetchAuditData() {
+    if (this.currentUser?.role !== 'superadmin') throw new Error('Akses hanya untuk superadmin.');
+    const userId = this.currentUser.id;
+    const [logs, activities] = await Promise.all([
+      this.sendToBackend('audit-logs'), this.sendToBackend('user-activities')
+    ]);
+    if (!logs?.ok || !activities?.ok) throw new Error('Riwayat aktivitas belum dapat dimuat.');
+    if (this.currentUser?.id !== userId || this.currentUser?.role !== 'superadmin') throw new Error('Sesi telah berubah.');
+    this.auditLogs = Array.isArray(logs.data) ? logs.data : [];
+    this.userActivities = Array.isArray(activities.data) ? activities.data : [];
+    this.auditLoaded = true;
+    return true;
   }
 
   async sendToBackend(resource, method = 'GET', body = null, params = {}) {
@@ -585,6 +703,7 @@ class DataStore {
       }
       if (!response.ok) {
         console.error(`Backend ${method} ${resource} gagal:`, payload?.message || response.statusText);
+        return { ...payload, ok: false, status: response.status, message: payload?.message || 'Permintaan belum dapat diproses.' };
       }
       return payload;
     } catch (e) {
@@ -595,20 +714,9 @@ class DataStore {
 
   async getProjectGuides() {
     if (window.location.protocol === 'file:') return [];
-    try {
-      const response = await fetch(`${API_BASE}?resource=guides`, {
-        credentials: 'same-origin',
-        headers: {
-          Accept: 'application/json'
-        }
-      });
-      if (!response.ok) return [];
-      const payload = await response.json();
-      return Array.isArray(payload?.data) ? payload.data : [];
-    } catch (e) {
-      console.info('Daftar panduan belum tersedia.', e);
-      return [];
-    }
+    const payload = await this.sendToBackend('guides');
+    if (!payload?.ok) throw new Error('Panduan belum dapat dimuat. Coba lagi.');
+    return Array.isArray(payload.data) ? payload.data : [];
   }
 
   async uploadProjectGuide(title, file) {
@@ -638,20 +746,9 @@ class DataStore {
 
   async getDocumentArchives() {
     if (window.location.protocol === 'file:') return [];
-    try {
-      const response = await fetch(`${API_BASE}?resource=document-archives`, {
-        credentials: 'same-origin',
-        headers: {
-          Accept: 'application/json'
-        }
-      });
-      if (!response.ok) return [];
-      const payload = await response.json();
-      return Array.isArray(payload?.data) ? payload.data : [];
-    } catch (e) {
-      console.info('Daftar arsip dokumen belum tersedia.', e);
-      return [];
-    }
+    const payload = await this.sendToBackend('document-archives');
+    if (!payload?.ok) throw new Error('Arsip dokumen belum dapat dimuat. Coba lagi.');
+    return Array.isArray(payload.data) ? payload.data : [];
   }
 
   async uploadDocumentArchive({ title, category, description, meetingId, file }) {
@@ -734,24 +831,24 @@ class DataStore {
   loadAuditLogs() {
     const raw = localStorage.getItem(AUDIT_LOGS_KEY);
     if (!raw) {
-      localStorage.setItem(AUDIT_LOGS_KEY, JSON.stringify(DEFAULT_AUDIT_LOGS));
+      saveCache(AUDIT_LOGS_KEY, JSON.stringify(DEFAULT_AUDIT_LOGS));
       return JSON.parse(JSON.stringify(DEFAULT_AUDIT_LOGS));
     }
     try {
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) {
-        localStorage.setItem(AUDIT_LOGS_KEY, JSON.stringify(DEFAULT_AUDIT_LOGS));
+        saveCache(AUDIT_LOGS_KEY, JSON.stringify(DEFAULT_AUDIT_LOGS));
         return JSON.parse(JSON.stringify(DEFAULT_AUDIT_LOGS));
       }
       return parsed;
     } catch (e) {
-      localStorage.setItem(AUDIT_LOGS_KEY, JSON.stringify(DEFAULT_AUDIT_LOGS));
+      saveCache(AUDIT_LOGS_KEY, JSON.stringify(DEFAULT_AUDIT_LOGS));
       return JSON.parse(JSON.stringify(DEFAULT_AUDIT_LOGS));
     }
   }
 
   saveAuditLogs() {
-    localStorage.setItem(AUDIT_LOGS_KEY, JSON.stringify(this.auditLogs));
+    saveCache(AUDIT_LOGS_KEY, JSON.stringify(this.auditLogs));
   }
 
   resetAuditLogs() {
@@ -806,7 +903,7 @@ class DataStore {
   }
 
   saveUserActivities() {
-    localStorage.setItem(USER_ACTIVITIES_KEY, JSON.stringify(this.userActivities || []));
+    saveCache(USER_ACTIVITIES_KEY, JSON.stringify(this.userActivities || []));
   }
 
   getUserActivities() {
@@ -830,7 +927,7 @@ class DataStore {
     };
     this.userActivities = [newActivity, ...(this.userActivities || [])].slice(0, 500);
     this.saveUserActivities();
-    this.sendToBackend('user-activities', 'POST', newActivity);
+    this.activityWrite = this.sendToBackend('user-activities', 'POST', newActivity);
     return newActivity;
   }
 
@@ -840,7 +937,7 @@ class DataStore {
   loadNotifications() {
     const raw = localStorage.getItem(NOTIFS_KEY);
     if (!raw) {
-      localStorage.setItem(NOTIFS_KEY, JSON.stringify(DEFAULT_NOTIFICATIONS));
+      saveCache(NOTIFS_KEY, JSON.stringify(DEFAULT_NOTIFICATIONS));
       return JSON.parse(JSON.stringify(DEFAULT_NOTIFICATIONS));
     }
     try {
@@ -851,7 +948,7 @@ class DataStore {
   }
 
   saveNotifications() {
-    localStorage.setItem(NOTIFS_KEY, JSON.stringify(this.notifications));
+    saveCache(NOTIFS_KEY, JSON.stringify(this.notifications));
   }
 
   getNotifications() {
@@ -887,7 +984,7 @@ class DataStore {
   loadUsers() {
     const raw = localStorage.getItem(USERS_LIST_KEY);
     if (!raw) {
-      localStorage.setItem(USERS_LIST_KEY, JSON.stringify(DEFAULT_USERS));
+      saveCache(USERS_LIST_KEY, JSON.stringify(DEFAULT_USERS));
       return JSON.parse(JSON.stringify(DEFAULT_USERS));
     }
     try {
@@ -899,7 +996,7 @@ class DataStore {
   }
 
   saveUsers() {
-    localStorage.setItem(USERS_LIST_KEY, JSON.stringify(this.users));
+    saveCache(USERS_LIST_KEY, JSON.stringify(this.users));
   }
 
   getUsers() {
@@ -910,7 +1007,7 @@ class DataStore {
     return this.users[id];
   }
 
-  addUser(userData) {
+  async addUser(userData) {
     const name = userData.name.trim();
     const id = name;
     const initial = name.slice(0, 2).toUpperCase();
@@ -925,37 +1022,55 @@ class DataStore {
       initial,
       lastLogin: Date.now()
     };
-    this.users[id] = newUser;
+    const saved = await this.commitToBackend('users', 'POST', { ...newUser, password: userData.password || '' });
+    this.users[id] = saved || newUser;
     this.saveUsers();
     this.addNotification(this.currentUser?.name || 'System', `menambahkan pengguna baru "${name}"`);
     const addedRoleLabel = userData.role === 'superadmin' ? 'Superadmin' : userData.role === 'koordinator' ? 'Koordinator' : 'Member';
     this.logAudit('Tambah Pengguna', `Menambahkan pengguna baru "${name}" dengan peran ${addedRoleLabel}`);
-    this.sendToBackend('users', 'POST', { ...newUser, password: userData.password || '' });
-    return newUser;
+    return this.users[id];
   }
 
-  updateUser(id, updatedData) {
+  async updateUser(id, updatedData) {
     if (this.users[id]) {
       const { password, ...safeUpdatedData } = updatedData;
-      this.users[id] = { ...this.users[id], ...safeUpdatedData };
+      const saved = await this.commitToBackend('users', 'PUT', { ...safeUpdatedData, ...(password ? { password } : {}) }, { id });
+      this.users[id] = saved || { ...this.users[id], ...safeUpdatedData };
+      if (this.currentUser?.id === id) this.setAuthenticatedUser(this.users[id]);
       this.saveUsers();
         const updatedRoleLabel = safeUpdatedData.role === 'superadmin' ? 'Superadmin' : safeUpdatedData.role === 'koordinator' ? 'Koordinator' : 'Member';
         this.logAudit('Ubah Pengguna', `Mengubah profil data pengguna "${id}" (${updatedRoleLabel})`);
-        this.sendToBackend('users', 'PUT', { ...this.users[id], ...(password ? { password } : {}) }, { id });
       return this.users[id];
     }
     return null;
   }
 
-  deleteUser(id) {
+  async deleteUser(id) {
     if (this.users[id]) {
+      await this.commitToBackend('users', 'DELETE', null, { id });
       delete this.users[id];
       this.saveUsers();
       this.logAudit('Hapus Pengguna', `Menghapus akun pengguna "${id}" dari sistem`);
-      this.sendToBackend('users', 'DELETE', null, { id });
       return true;
     }
     return false;
+  }
+
+  async setUserActive(id, isActive) {
+    if (this.currentUser?.role !== 'superadmin') throw new Error('Hanya superadmin yang dapat mengubah status akun.');
+    const saved = await this.commitToBackend('users', 'PUT', { action: 'set_status', isActive }, { id });
+    if (!saved || saved.id !== id || saved.isActive !== isActive) throw new Error('Perubahan status akun belum dapat dikonfirmasi.');
+    this.users[id] = saved;
+    this.saveUsers();
+    return saved;
+  }
+
+  async refreshUsers() {
+    const result = await this.sendToBackend('users', 'GET');
+    if (!result?.ok || !result.data || Array.isArray(result.data)) throw new Error('Daftar anggota belum dapat dimuat. Silakan coba lagi.');
+    this.users = result.data;
+    this.saveUsers();
+    return this.users;
   }
 
   loadUser() {
@@ -985,7 +1100,7 @@ class DataStore {
     if (this.users[userId]) {
       this.updateLastLogin(userId);
       this.currentUser = this.users[userId];
-      localStorage.setItem(USER_KEY, userId);
+      saveCache(USER_KEY, userId);
       return this.currentUser;
     }
     return null;
@@ -996,27 +1111,38 @@ class DataStore {
     this.users[user.id] = { ...(this.users[user.id] || {}), ...user };
     this.currentUser = this.users[user.id];
     this.saveUsers();
-    localStorage.setItem(USER_KEY, user.id);
-    localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+    saveCache(USER_KEY, user.id);
+    saveCache(AUTH_KEY, JSON.stringify(user));
     return this.currentUser;
   }
 
   clearAuthenticatedUser() {
     this.currentUser = null;
-    localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(AUTH_KEY);
+    this.users = {};
+    this.tasks = [];
+    this.meetings = [];
+    this.notifications = [];
+    this.auditLogs = [];
+    this.userActivities = [];
+    this.progressNotes = {};
+    this.auditLoaded = false;
+    this.lastSyncedAt = null;
+    this.legacyRecovery = null;
+    [USER_KEY, AUTH_KEY, USERS_LIST_KEY]
+      .forEach(key => localStorage.removeItem(key));
   }
 
   async logout() {
     if (window.location.protocol !== 'file:') {
       try {
-        await fetch(`${API_BASE}?resource=auth`, {
+        const response = await fetch(`${API_BASE}?resource=auth`, {
           method: 'DELETE',
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         });
+        if (!response.ok && response.status !== 401) throw new Error('Belum berhasil keluar. Silakan coba lagi.');
       } catch (e) {
-        console.info('Logout server gagal, membersihkan sesi lokal.', e);
+        throw new Error('Belum berhasil keluar. Periksa koneksi lalu coba lagi.');
       }
     }
     this.clearAuthenticatedUser();
@@ -1051,7 +1177,7 @@ class DataStore {
   }
 
   save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.tasks));
+    saveCache(STORAGE_KEY, JSON.stringify(this.tasks));
   }
 
   loadGeneralMeetings() {
@@ -1067,7 +1193,7 @@ class DataStore {
   }
 
   saveMeetings() {
-    localStorage.setItem(MEETINGS_KEY, JSON.stringify(this.meetings));
+    saveCache(MEETINGS_KEY, JSON.stringify(this.meetings));
   }
 
   getMeetings() {
@@ -1087,14 +1213,14 @@ class DataStore {
   }
 
   saveProgressNotes() {
-    localStorage.setItem(PROGRESS_NOTES_KEY, JSON.stringify(this.progressNotes));
+    saveCache(PROGRESS_NOTES_KEY, JSON.stringify(this.progressNotes));
   }
 
   getProgressNote(phase) {
     return this.progressNotes?.[phase] || { phase, content: '', updatedBy: '', createdAt: null, updatedAt: null };
   }
 
-  saveProgressNote(phase, content) {
+  async saveProgressNote(phase, content) {
     const previous = this.getProgressNote(phase);
     const note = {
       ...previous,
@@ -1104,21 +1230,15 @@ class DataStore {
       createdAt: previous.createdAt || Date.now(),
       updatedAt: Date.now()
     };
-    this.progressNotes = { ...(this.progressNotes || {}), [phase]: note };
+    const saved = await this.commitToBackend('progress-notes', 'PUT', { phase, content }, { phase });
+    this.progressNotes = { ...(this.progressNotes || {}), [phase]: saved || note };
     this.saveProgressNotes();
     this.logAudit('Ubah Catatan Progress', `Memperbarui catatan progress ${phase.toUpperCase()}`);
-    this.sendToBackend('progress-notes', 'PUT', { phase, content }, { phase }).then(payload => {
-      if (payload?.ok && payload.data) {
-        this.progressNotes = { ...(this.progressNotes || {}), [phase]: payload.data };
-        this.saveProgressNotes();
-        window.dispatchEvent(new CustomEvent('capstone:data-synced'));
-      }
-    });
-    return note;
+    return this.progressNotes[phase];
   }
 
   saveDefault() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_TASKS));
+    saveCache(STORAGE_KEY, JSON.stringify(DEFAULT_TASKS));
   }
 
   reset() {
@@ -1149,24 +1269,24 @@ class DataStore {
     return this.tasks.filter(t => t.phase === phase);
   }
 
-  add(taskData) {
+  async add(taskData) {
     const now = Date.now();
     const newTask = {
       id: 't-' + Date.now(),
       ...taskData,
       createdAt: taskData.createdAt || now,
       updatedAt: taskData.updatedAt || now,
-      checklistDone: taskData.checklist ? taskData.checklist.map(() => false) : []
+      checklistDone: taskData.checklistDone || (taskData.checklist || []).map(() => false)
     };
-    this.tasks.push(newTask);
+    const saved = await this.commitToBackend('tasks', 'POST', newTask);
+    this.tasks.push(saved || newTask);
     this.save();
     this.addNotification(taskData.pic || this.currentUser?.name || 'Anggota', `mendapat tugas baru "${taskData.title}"`, taskData.pic || null);
     this.logAudit('Tambah Tugas', `Menambahkan tugas baru "${taskData.title}" untuk PIC ${taskData.pic}`);
-    this.sendToBackend('tasks', 'POST', newTask);
-    return newTask;
+    return saved || newTask;
   }
 
-  update(id, updatedData) {
+  async update(id, updatedData) {
     const index = this.tasks.findIndex(t => t.id === id);
     if (index !== -1) {
       const oldStatus = this.tasks[index].status;
@@ -1190,22 +1310,29 @@ class DataStore {
         nextData.reviewedAt = Date.now();
         nextData.status = 'Selesai';
       }
-      this.tasks[index] = { ...this.tasks[index], ...nextData, updatedAt: Date.now() };
+      const request = { ...updatedData };
+      if (this.currentUser?.role !== 'superadmin') delete request.reviewer;
+      Object.keys(request).forEach(key => {
+        if (key !== 'reviewAction' && JSON.stringify(request[key]) === JSON.stringify(this.tasks[index][key])) delete request[key];
+      });
+      if (!Object.keys(request).length) return this.tasks[index];
+      const saved = await this.commitToBackend('tasks', 'PUT', request, { id });
+      this.tasks[index] = saved || { ...this.tasks[index], ...nextData, updatedAt: Date.now() };
+      delete this.tasks[index].reviewAction;
       this.save();
       
       if (updatedData.status && updatedData.status !== oldStatus) {
-        this.addNotification(this.currentUser?.name || 'Anggota', `mengubah status "${this.tasks[index].title}" menjadi ${updatedData.status}`);
+        this.addNotification(this.currentUser?.name || 'Anggota', `mengubah status "${this.tasks[index].title}" menjadi ${updatedData.status}`, this.tasks[index].pic);
         this.logAudit('Ubah Status', `Mengubah status tugas "${this.tasks[index].title}" dari ${oldStatus} menjadi ${updatedData.status}`);
       } else {
         this.logAudit('Ubah Tugas', `Perbarui rincian tugas "${this.tasks[index].title}"`);
       }
-      this.sendToBackend('tasks', 'PUT', this.tasks[index], { id });
       return this.tasks[index];
     }
     return null;
   }
 
-  createMeeting(meetingData) {
+  async createMeeting(meetingData) {
     const taskId = meetingData.taskId || null;
     const meeting = {
       id: meetingData.id || `m-${Date.now()}`,
@@ -1219,6 +1346,9 @@ class DataStore {
       taskId,
       hasBeritaAcara: false
     };
+    if (taskId && !this.getById(taskId)) throw new Error('Tugas terkait tidak ditemukan.');
+    const saved = await this.commitToBackend('meetings', 'POST', meeting);
+    if (saved) Object.assign(meeting, saved);
 
     if (taskId) {
       const task = this.getById(taskId);
@@ -1231,11 +1361,10 @@ class DataStore {
     }
 
     this.logAudit('Tambah Pertemuan', `Menambahkan agenda pertemuan "${meeting.title}"`);
-    this.sendToBackend('meetings', 'POST', meeting);
     return { ok: true, meeting };
   }
 
-  updateMeeting(meetingId, meetingData) {
+  async updateMeeting(meetingId, meetingData) {
     let existing = this.meetings.find(m => m.id === meetingId) || null;
     let sourceTask = null;
     if (!existing) {
@@ -1258,6 +1387,8 @@ class DataStore {
     }
 
     const updated = { ...existing, ...meetingData, id: meetingId, taskId: targetTaskId, phase: meetingData.phase ?? existing.phase ?? null };
+    const saved = await this.commitToBackend('meetings', 'PUT', { action: 'update', ...meetingData }, { id: meetingId });
+    if (saved) Object.assign(updated, saved);
     this.meetings = this.meetings.filter(m => m.id !== meetingId);
     this.tasks.forEach(task => {
       task.meetings = (task.meetings || []).filter(m => m.id !== meetingId);
@@ -1272,21 +1403,20 @@ class DataStore {
     this.save();
     this.saveMeetings();
     this.logAudit('Ubah Pertemuan', `Memperbarui agenda pertemuan "${updated.title}"`);
-    this.sendToBackend('meetings', 'PUT', { action: 'update', ...updated }, { id: meetingId });
     return { ok: true, meeting: updated };
   }
 
-  deleteMeeting(taskId, meetingId) {
+  async deleteMeeting(taskId, meetingId) {
     if (!taskId) {
       const meeting = this.meetings.find(m => m.id === meetingId);
       if (!meeting) return { ok: false, message: 'Pertemuan tidak ditemukan.' };
       if (meeting.hasBeritaAcara) {
         return { ok: false, message: 'Pertemuan yang sudah memiliki berita acara tidak boleh dihapus.' };
       }
+      await this.commitToBackend('meetings', 'DELETE', null, { id: meetingId });
       this.meetings = this.meetings.filter(m => m.id !== meetingId);
       this.saveMeetings();
       this.logAudit('Hapus Pertemuan', `Soft delete pertemuan "${meeting.title}"`);
-      this.sendToBackend('meetings', 'DELETE', null, { id: meetingId });
       return { ok: true, meeting };
     }
     const task = this.getById(taskId);
@@ -1295,55 +1425,52 @@ class DataStore {
     if (meeting.hasBeritaAcara) {
       return { ok: false, message: 'Pertemuan yang sudah memiliki berita acara tidak boleh dihapus.' };
     }
-
+    await this.commitToBackend('meetings', 'DELETE', null, { id: meetingId });
     task.meetings = (task.meetings || []).filter(m => m.id !== meetingId);
     this.save();
     this.logAudit('Hapus Pertemuan', `Soft delete pertemuan "${meeting.title}"`);
-    this.sendToBackend('meetings', 'DELETE', null, { id: meetingId });
     return { ok: true, meeting };
   }
 
-  markMeetingBeritaAcara(taskId, meetingId) {
+  async markMeetingBeritaAcara(taskId, meetingId) {
+    const saved = await this.commitToBackend('meetings', 'PUT', { action: 'mark_berita_acara' }, { id: meetingId });
     if (!taskId) {
       const meeting = this.meetings.find(m => m.id === meetingId);
       if (!meeting) return null;
-      meeting.hasBeritaAcara = true;
+      Object.assign(meeting, saved || { hasBeritaAcara: true });
       this.saveMeetings();
-      this.sendToBackend('meetings', 'PUT', { action: 'mark_berita_acara' }, { id: meetingId });
       return meeting;
     }
     const task = this.getById(taskId);
     const meeting = task?.meetings?.find(m => m.id === meetingId);
     if (!task || !meeting) return null;
 
-    meeting.hasBeritaAcara = true;
+    Object.assign(meeting, saved || { hasBeritaAcara: true });
     this.save();
-    this.sendToBackend('meetings', 'PUT', { action: 'mark_berita_acara' }, { id: meetingId });
     return meeting;
   }
 
-  delete(id) {
+  async delete(id) {
     const index = this.tasks.findIndex(t => t.id === id);
     if (index !== -1) {
+      await this.commitToBackend('tasks', 'DELETE', null, { id });
       const removed = this.tasks.splice(index, 1);
       this.save();
       this.addNotification(this.currentUser?.name || 'Anggota', `menghapus tugas "${removed[0].title}"`);
       this.logAudit('Hapus Tugas', `Menghapus tugas "${removed[0].title}"`);
-      this.sendToBackend('tasks', 'DELETE', null, { id });
       return removed[0];
     }
     return null;
   }
 
-  toggleChecklist(taskId, checklistIndex, isDone) {
+  async toggleChecklist(taskId, checklistIndex, isDone) {
     const task = this.getById(taskId);
     if (task) {
-      if (!task.checklistDone) task.checklistDone = [];
-      task.checklistDone[checklistIndex] = isDone;
-      this.save();
+      const done = [...(task.checklistDone || [])];
+      done[checklistIndex] = isDone;
+      await this.update(taskId, { checklistDone: done });
       const itemTitle = task.checklist[checklistIndex] || 'Sub-tugas';
       this.logAudit('Centang Checklist', `${isDone ? 'Menyelesaikan' : 'Membatalkan'} centang sub-tugas "${itemTitle}" pada tugas "${task.title}"`);
-      this.sendToBackend('tasks', 'PUT', task, { id: taskId });
     }
   }
 

@@ -17,7 +17,7 @@
 
         <div class="form-group">
           <label class="form-label">Judul Tugas</label>
-          <input type="text" id="taskTitleInput" class="form-input" required placeholder="Contoh: Lengkapi analisis proses persediaan obat" />
+          <input type="text" id="taskTitleInput" class="form-input" required maxlength="255" placeholder="Contoh: Lengkapi analisis proses persediaan obat" />
         </div>
 
         <div class="form-group">
@@ -90,6 +90,7 @@
         </div>
 
         <div class="task-review-panel">
+          <div id="taskNextAction" class="task-next-action" aria-live="polite"></div>
           <div class="task-review-panel-header">
             <div>
               <div class="task-review-label">Status Review</div>

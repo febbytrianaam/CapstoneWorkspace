@@ -26,10 +26,16 @@ Capstone Workspace is a PHP/MySQL coordination app for a Universitas Terbuka Cap
 
 - Not Laravel. Do not use Artisan.
 - Preserve existing data and user changes.
+- The database is live and used by team members. Do not execute migrations, seeds, reconciliation, SQL changes, or real mutation requests for testing without a new explicit request.
+- Use the isolated tests in `tests/`. Even `Repository::create()` performs compatibility DDL, so do not run it as a live smoke check.
+- On 18 October the owner explicitly approved adding only `berita_acara_drafts` and `browser_recovery_backups`; this narrow migration has been applied and verified. This is not blanket permission for other live DDL/DML or test records.
+- The owner later separately approved migration 007 (`users.is_active`, default active) and one BA004-to-BA003 draft-number correction. Both are already applied and verified. These completed, scoped approvals do not authorize additional live mutations or automatic member deactivation.
+- Preserve legacy browser work; BA import must never overwrite a conflicting server draft or merge stale task/cache records into live business tables. UI preferences remain local.
 - Use port `4000` unless the owner says otherwise.
 - Keep Cloudflare origin HTTP unless local TLS is explicitly configured.
 - Do not expose Cloudflare tunnel tokens, passwords, private meeting links, or real data dumps.
 - Superadmin-only audit/activity visibility is intentional.
+- Members may see a minimal phase-access/presence summary in Tugas 1/2/3, not detailed audit records. Online is approximate app-wide presence, not presence within the selected phase.
 - Member reviewer selection is read-only; superadmin sets reviewers manually.
 
 ## Key Files And Folders
@@ -55,7 +61,7 @@ Capstone Workspace is a PHP/MySQL coordination app for a Universitas Terbuka Cap
 
 ## Current Risks
 
-- No automated tests.
+- Isolated datastore and browser regression tests exist; real MySQL integration coverage is still missing.
 - No CSRF protection yet.
 - File uploads are stored in MySQL BLOBs.
 - Some setup and deployment steps remain manual.
@@ -99,8 +105,16 @@ node --check js/data.js
 node --check js/rbac.js
 ```
 
-Initialize repository/database compatibility checks:
+Safe datastore regression tests (no database):
 
 ```bash
-php -r "require 'backend/Repository.php'; Repository::create(); echo 'ok';"
+node --test tests/store.test.cjs tests/rbac.test.cjs
 ```
+
+Browser regression tests: `node tests/workspace-ui.cjs <playwright-module-path>`. Requires PHP, Playwright, and an installed Chrome browser. Every request is intercepted; do not replace the synthetic URL with the live application's URL.
+
+BA print/naming: see `docs/30_implemented/2026-10-18-ba-print-layout-and-naming/`. Codes are persisted in existing draft JSON; do not mass-renumber or count manual/draft copies twice. A single owner-approved BA004-to-BA003 correction has already been applied and verified; do not rerun it. Print regression includes synthetic long notes and multiple photo orientations, without live writes.
+
+Member account status: see `docs/30_implemented/2026-10-18-member-account-status/`. Deactivation preserves historical assignments/documents and only removes the account from current roster/assignment choices; do not delete their tasks or alter PDFs. The owner approved adding `users.is_active`, not automatically deactivating any specific person. Status controls are superadmin-only.
+
+Migration 007 has been applied and verified on 18 October 2026. All five accounts remained active. Do not rerun the full schema or deactivate a member as a test. Reopening a BA refreshes the active user directory; already archived PDFs and manual activity notes are not rewritten.

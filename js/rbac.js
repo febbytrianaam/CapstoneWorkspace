@@ -63,7 +63,11 @@
         MATRIX[row.role][row.area][row.permission] = Boolean(Number(row.allowed));
       }
     });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(MATRIX));
+    cacheMatrix();
+  }
+
+  function cacheMatrix() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(MATRIX)); } catch { /* The server remains authoritative. */ }
   }
 
   async function loadFromBackend() {
@@ -85,8 +89,9 @@
     }
   }
 
-  function persistToBackend(role, area, permission, value) {
-    fetch(`${API_BASE}?resource=rbac`, {
+  async function persistToBackend(role, area, permission, value) {
+    if (window.location?.protocol === 'file:') return Boolean(value);
+    const response = await fetch(`${API_BASE}?resource=rbac`, {
       method: 'POST',
       credentials: 'same-origin',
       headers: {
@@ -94,18 +99,20 @@
         Accept: 'application/json'
       },
       body: JSON.stringify({ role, area, permission, allowed: Boolean(value) })
-    }).catch(() => {});
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok || typeof payload.data?.allowed !== 'boolean') throw new Error(payload?.message || 'Perubahan izin belum tersimpan. Silakan coba lagi.');
+    return payload.data.allowed;
   }
 
   window.RBAC = {
     matrix: MATRIX,
     roleOf,
     loadFromBackend,
-    set(role, area, permission, value) {
+    async set(role, area, permission, value) {
       if (!MATRIX[role]?.[area] || !(permission in MATRIX[role][area])) return;
-      MATRIX[role][area][permission] = Boolean(value);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(MATRIX));
-      persistToBackend(role, area, permission, value);
+      MATRIX[role][area][permission] = await persistToBackend(role, area, permission, value);
+      cacheMatrix();
     },
     can(user, area, action) {
       if (area === 'audit' && action === 'read') {

@@ -46,6 +46,7 @@ function authenticatedUser(Repository $repo): ?array
 
     try {
         $user = $repo->userById($userId);
+        if (!$user['isActive']) throw new RuntimeException('Akun nonaktif.');
     } catch (Throwable) {
         unset($_SESSION['capstone_user_id'], $_SESSION['capstone_user_name'], $_SESSION['capstone_user_role']);
         return null;
@@ -114,6 +115,65 @@ try {
 
     $currentUser = requireAuthenticatedUser($repo);
 
+    if (in_array($resource, ['ba-drafts', 'browser-backups'], true)) {
+        if (!in_array($currentUser['role'], ['superadmin', 'koordinator'], true)
+            || ($resource === 'browser-backups' && $method === 'GET' && $currentUser['role'] !== 'superadmin')) {
+            Response::error('Akses hanya untuk pengelola berita acara.', 403);
+        }
+        if ($resource === 'ba-drafts') {
+            $action = $method === 'GET' ? 'read' : 'create';
+            foreach ($repo->rbacPermissions() as $permission) {
+                if ($permission['role'] === $currentUser['role'] && $permission['area'] === 'beritaAcara'
+                    && $permission['permission'] === $action && !(bool) (int) $permission['allowed']) {
+                    Response::error('Anda tidak memiliki izin untuk berita acara.', 403);
+                }
+            }
+        }
+        $storage = $repo->beritaAcaraStorage();
+        if ($resource === 'ba-drafts' && $method === 'GET') {
+            header('Cache-Control: no-store');
+            Response::json(['ok' => true, 'data' => $storage->draft((string) ($_GET['meeting_id'] ?? ''))]);
+        }
+        if ($resource === 'ba-drafts' && $method === 'PUT') {
+            if (!is_array($input['payload'] ?? null) || !is_int($input['revision'] ?? null)) Response::error('Data dan versi draft wajib disertakan.', 422);
+            Response::json(['ok' => true, 'data' => $storage->save((string) ($_GET['meeting_id'] ?? ''), $input['payload'], $input['revision'], $currentUser['id'])]);
+        }
+        if ($resource === 'ba-drafts' && $method === 'POST') {
+            Response::json(['ok' => true, 'data' => $storage->importDrafts((string) ($input['backupId'] ?? ''), $currentUser['id'])]);
+        }
+        if ($resource === 'browser-backups' && $method === 'POST') {
+            if (!is_array($input['entries'] ?? null)) Response::error('Data cadangan tidak valid.', 422);
+            Response::json(['ok' => true, 'data' => $storage->backup($input['entries'], $currentUser['id'])]);
+        }
+        if ($resource === 'browser-backups' && $method === 'GET') {
+            header('Cache-Control: no-store');
+            $id = (string) ($_GET['id'] ?? '');
+            Response::json(['ok' => true, 'data' => $id === '' ? $storage->backups() : $storage->backupById($id)]);
+        }
+        Response::error('Metode tidak tersedia.', 405);
+    }
+
+    if ($resource === 'presence' && $method === 'POST'
+        && in_array($currentUser['role'], ['superadmin', 'koordinator', 'member'], true)) {
+        $repo->touchUserPresence($currentUser['id']);
+        Response::json(['ok' => true, 'data' => ['serverTime' => time() * 1000]]);
+    }
+
+    if ($resource === 'phase-access' && $method === 'GET') {
+        header('Cache-Control: no-store');
+        $phase = (string) ($_GET['phase'] ?? '');
+        if (!in_array($phase, ['tugas1', 'tugas2', 'tugas3'], true)) {
+            Response::error('Tahap tugas tidak valid.', 422);
+        }
+        foreach ($repo->rbacPermissions() as $permission) {
+            if ($permission['role'] === $currentUser['role'] && $permission['area'] === 'pages'
+                && $permission['permission'] === $phase && !(bool) (int) $permission['allowed']) {
+                Response::error('Anda tidak memiliki akses ke tahap ini.', 403);
+            }
+        }
+        Response::json(['ok' => true, 'data' => ['members' => $repo->phaseAccessSummary($phase), 'serverTime' => time() * 1000]]);
+    }
+
     if ($resource !== 'auth') {
         $role = $currentUser['role'];
         $permissions = [
@@ -128,7 +188,7 @@ try {
 
     if ($resource === 'snapshot' && $method === 'GET') {
         $repo->touchUserPresence($currentUser['id']);
-        Response::json(['ok' => true, 'data' => $repo->snapshot($currentUser)]);
+        Response::json(['ok' => true, 'data' => $repo->snapshot($currentUser, ($_GET['include_logs'] ?? '1') !== '0')]);
     }
 
     if ($resource === 'rbac' && $method === 'GET') {
@@ -445,6 +505,11 @@ try {
         if (!$id) {
             Response::error('Parameter id wajib diisi.', 422);
         }
+        if (($input['action'] ?? '') === 'set_status') {
+            if ($currentUser['role'] !== 'superadmin') Response::error('Hanya superadmin yang dapat mengubah status akun.', 403);
+            if (!is_bool($input['isActive'] ?? null)) Response::error('Status akun tidak valid.', 422);
+            Response::json(['ok' => true, 'data' => $repo->setUserActive((string) $id, $input['isActive'], $currentUser)]);
+        }
         $target = $repo->userById((string) $id);
         $newRole = (string) ($input['role'] ?? $target['role']);
         if ($target['role'] === 'superadmin' && $newRole !== 'superadmin' && $repo->countUsersByRole('superadmin') <= 1) {
@@ -503,6 +568,13 @@ try {
     }
 
     Response::error('Endpoint tidak ditemukan.', 404);
+} catch (DraftConflictException $e) {
+    Response::json(['ok' => false, 'message' => $e->getMessage(), 'conflict' => true, 'data' => $e->current], 409);
+} catch (PDOException $e) {
+    if (in_array($resource ?? '', ['ba-drafts', 'browser-backups'], true) && (string) $e->getCode() === '42S02') {
+        Response::error('Penyimpanan berita acara belum diaktifkan. Hubungi pengelola.', 503);
+    }
+    Response::error('Data belum dapat disimpan atau dimuat. Silakan coba kembali.', 500);
 } catch (InvalidArgumentException $e) {
     Response::error($e->getMessage(), 422);
 } catch (RuntimeException $e) {

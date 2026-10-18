@@ -4,6 +4,8 @@
 
 Berita Acara generation, preview, print workflow, manual BA upload, and archive linkage shipped for meeting documentation.
 
+On 2026-10-17, fixed accidental modal dismissal while selecting the project title. A drag starting in the form and ending on the backdrop generated a backdrop click. Dismissal now requires the pointer to start on the backdrop as well. The Backspace/Delete guard runs during bubbling so activity-grid keyboard handlers still receive these keys.
+
 ## What Changed From The Plan
 
 Preview is browser-based HTML/print rather than server-side PDF generation.
@@ -12,6 +14,7 @@ Preview is browser-based HTML/print rather than server-side PDF generation.
 
 - `partials/modals/berita-acara.php`
 - `js/app.js`
+- `index.php` (JavaScript cache version)
 - `css/style.css`
 - `partials/pages/dashboard.php`
 - `partials/pages/phase-placeholders.php`
@@ -23,6 +26,13 @@ Preview is browser-based HTML/print rather than server-side PDF generation.
 ## Tests Run
 
 Unknown historical test record.
+
+2026-10-17 regression verification:
+
+- Reproduced the original drag-selection dismissal in headless Chrome using the actual BA partial, stylesheet, and modal initialization code with unrelated callbacks stubbed.
+- After the fix, verified Backspace/Delete, replacement typing, selection released outside, activity-grid Delete event delivery, X, Cancel, and deliberate backdrop clicks at widths 1280, 390, and 360 pixels.
+- `node --check js/app.js`, `php -l index.php`, and `git diff --check` passed.
+- Full authenticated meeting flow was not exercised; the local server on port 4000 was unavailable. Verification used an isolated browser fixture and did not change database records.
 
 ## Manual QA
 

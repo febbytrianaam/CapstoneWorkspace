@@ -64,6 +64,7 @@
 
     <div class="document-archive-toolbar">
       <div class="search-filter-group">
+        <input id="documentArchiveSearch" class="input-search" type="search" placeholder="Cari judul atau nama file..." aria-label="Cari dokumen" />
         <select id="documentArchiveCategoryFilter" class="select-filter">
           <option value="SEMUA">Semua Jenis</option>
           <option value="berita_acara">Berita Acara</option>
@@ -76,6 +77,13 @@
           <option value="lampiran">Lampiran</option>
           <option value="lainnya">Lainnya</option>
         </select>
+        <select id="documentArchiveSort" class="select-filter" aria-label="Urutkan dokumen">
+          <option value="newest">Terbaru</option>
+          <option value="oldest">Terlama</option>
+          <option value="name">Nama A-Z</option>
+          <option value="category">Jenis dokumen</option>
+        </select>
+        <button id="resetDocumentFiltersBtn" type="button" class="btn btn-secondary">Reset filter</button>
       </div>
     </div>
 

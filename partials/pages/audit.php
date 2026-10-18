@@ -15,6 +15,14 @@
           </div>
         </div>
 
+        <section class="browser-backups-section" aria-label="Cadangan browser lama">
+          <div class="phase-access-heading">
+            <div><h3>Cadangan Browser Lama</h3><p>Salinan data sebelum beralih ke penyimpanan server.</p></div>
+            <button type="button" id="loadBrowserBackupsBtn" class="btn btn-secondary">Lihat Cadangan</button>
+          </div>
+          <div id="browserBackupList" aria-live="polite"></div>
+        </section>
+
         <!-- Mini KPI Cards Grid untuk Audit -->
         <div id="auditKpiGrid" class="stats-grid" style="margin-bottom: 1.5rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));"></div>
 

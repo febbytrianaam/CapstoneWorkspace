@@ -14,6 +14,7 @@ It separates current facts, rough thinking, future plans, and shipped implementa
 - [Privacy and retention](00_current/privacy_and_retention.md)
 - [Roadmap](00_current/roadmap.md)
 - [Next-step plan](20_plans/active/next-step-plan.md)
+- [Audit alur dan bug, 17 Oktober 2026](10_ai_workspace/reviews/2026-10-17-flow-audit.md)
 
 ## Folder Lifecycle
 
@@ -49,6 +50,11 @@ Existing project-specific reference notes currently in `docs/`:
 - [2026-10-12 Mobile responsive polish](30_implemented/2026-10-12-mobile-responsive-polish/implementation_report.md)
 - [2026-10-13 Superadmin user activity tracking](30_implemented/2026-10-13-user-activity-tracking/implementation_report.md)
 - [2026-10-13 AI-friendly docs system](30_implemented/2026-10-13-ai-friendly-docs-system/implementation_report.md)
+- [2026-10-17 Team workflow improvements](30_implemented/2026-10-17-team-workflow-improvements/implementation_report.md)
+- [2026-10-18 Team phase access and presence](30_implemented/2026-10-18-team-phase-presence/implementation_report.md)
+- [2026-10-18 Server BA drafts and browser recovery](30_implemented/2026-10-18-server-ba-drafts/implementation_report.md)
+- [2026-10-18 BA print layout and naming](30_implemented/2026-10-18-ba-print-layout-and-naming/implementation_report.md)
+- [2026-10-18 Member account status](30_implemented/2026-10-18-member-account-status/implementation_report.md)
 
 For every future meaningful shipped feature, create:
 

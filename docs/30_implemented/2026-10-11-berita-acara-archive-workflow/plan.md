@@ -21,6 +21,7 @@ Support meeting Berita Acara workflows for generated and manually uploaded meeti
 ## Implementation Details
 
 - Use a modal form for Berita Acara data entry.
+- Dismiss on backdrop click only when the pointer also started on the backdrop, so text selection cannot close the form.
 - Build preview HTML in a new browser tab.
 - Use browser print/save-to-PDF for final output.
 - Store manual BA uploads through the document archive API.
@@ -29,6 +30,7 @@ Support meeting Berita Acara workflows for generated and manually uploaded meeti
 ## Test Plan
 
 - Open a meeting and generate BA.
+- Delete and replace the title; drag a text selection outside the dialog without closing it.
 - Preview in a new tab.
 - Print/save from browser.
 - Upload a manual BA and verify it appears in archive and meeting context.

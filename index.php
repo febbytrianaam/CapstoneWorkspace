@@ -9,7 +9,7 @@ header('Expires: 0');
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ruang Kerja Capstone — Universitas Terbuka</title>
-  <link rel="stylesheet" href="css/style.css?v=20261014-task-code-1" />
+  <link rel="stylesheet" href="css/style.css?v=20261018-member-status-1" />
 </head>
 <body>
 
@@ -20,6 +20,7 @@ header('Expires: 0');
 
   <div class="main-wrapper">
     <?php require __DIR__ . '/partials/top-header.php'; ?>
+    <div id="workspaceFeedback" class="workspace-feedback" aria-live="polite"></div>
 
     <main class="content-body">
       <?php require __DIR__ . '/partials/pages/dashboard.php'; ?>
@@ -48,8 +49,8 @@ header('Expires: 0');
 </script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="js/rbac.js?v=20261014-task-code-1"></script>
-  <script src="js/data.js?v=20261014-task-code-1"></script>
-  <script src="js/app.js?v=20261014-task-code-1"></script>
+  <script src="js/rbac.js?v=20261018-ba-storage-2"></script>
+  <script src="js/data.js?v=20261018-member-status-1"></script>
+  <script src="js/app.js?v=20261018-member-status-1"></script>
 </body>
 </html>

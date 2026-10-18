@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/Database.php';
+require_once __DIR__ . '/BeritaAcaraStorage.php';
 
 final class Repository
 {
@@ -25,6 +26,11 @@ final class Repository
         $repository->ensureGuidesTable();
         $repository->ensureDocumentArchivesTable();
         return $repository;
+    }
+
+    public function beritaAcaraStorage(): BeritaAcaraStorage
+    {
+        return new BeritaAcaraStorage($this->db);
     }
 
     public function rbacPermissions(): array
@@ -261,13 +267,13 @@ final class Repository
         }
     }
 
-    public function snapshot(?array $currentUser = null): array
+    public function snapshot(?array $currentUser = null, bool $includeLogs = true): array
     {
         $canSeeMeetings = $this->canSeeMeetings($currentUser);
         $wibNow = (new DateTimeImmutable('now', new DateTimeZone('UTC')))
             ->setTimezone(new DateTimeZone('Asia/Jakarta'))
             ->format('d/m/Y H:i:s') . ' WIB';
-        return [
+        $snapshot = [
             'timestamp' => time() * 1000,
             'dateFormatted' => $wibNow,
             'system' => 'STSI4440 Capstone Workspace MySQL',
@@ -277,9 +283,12 @@ final class Repository
             'meetings' => $canSeeMeetings ? $this->generalMeetings() : [],
             'progressNotes' => $this->phaseProgressNotes(),
             'notifications' => $this->notifications($currentUser),
-            'auditLogs' => ($currentUser['role'] ?? 'member') === 'superadmin' ? $this->auditLogs() : [],
-            'userActivities' => ($currentUser['role'] ?? 'member') === 'superadmin' ? $this->userActivityLogs() : [],
         ];
+        if ($includeLogs) {
+            $snapshot['auditLogs'] = ($currentUser['role'] ?? 'member') === 'superadmin' ? $this->auditLogs() : [];
+            $snapshot['userActivities'] = ($currentUser['role'] ?? 'member') === 'superadmin' ? $this->userActivityLogs() : [];
+        }
+        return $snapshot;
     }
 
     public function touchUserPresence(string $userId): void
@@ -319,6 +328,7 @@ final class Repository
                 'name' => $user['name'],
                 'role' => $user['role'],
                 'roles' => $user['roles'],
+                'isActive' => $user['isActive'],
                 'color' => $user['color'],
                 'initial' => $user['initial'],
             ];
@@ -331,7 +341,7 @@ final class Repository
         $stmt = $this->db->prepare('SELECT * FROM users WHERE username = :username LIMIT 1');
         $stmt->execute(['username' => trim($username)]);
         $row = $stmt->fetch();
-        if (!$row || !password_verify($password, $row['password_hash'])) {
+        if (!$row || !(bool) ($row['is_active'] ?? true) || !password_verify($password, $row['password_hash'])) {
             return null;
         }
 
@@ -404,8 +414,10 @@ final class Repository
 
     public function updateUser(string $id, array $data): array
     {
+        if (array_key_exists('isActive', $data)) throw new InvalidArgumentException('Gunakan aksi perubahan status akun.');
         $existing = $this->userById($id);
         $merged = array_merge($existing, $data);
+        if (!$existing['isActive'] && ($merged['role'] ?? '') === 'superadmin') throw new InvalidArgumentException('Aktifkan akun terlebih dahulu sebelum menjadikannya superadmin.');
         $stmt = $this->db->prepare(
             'UPDATE users
              SET username = :username, name = :name, full_name = :full_name, nim = :nim,
@@ -450,9 +462,43 @@ final class Repository
 
     public function countUsersByRole(string $role): int
     {
-        $stmt = $this->db->prepare('SELECT COUNT(*) FROM users WHERE role = :role');
+        $stmt = $this->db->prepare('SELECT * FROM users WHERE role = :role');
         $stmt->execute(['role' => $role]);
-        return (int) $stmt->fetchColumn();
+        return count(array_filter($stmt->fetchAll(), static fn ($row) => (bool) ($row['is_active'] ?? true)));
+    }
+
+    public function setUserActive(string $id, bool $active, array $actor): array
+    {
+        if (($actor['role'] ?? '') !== 'superadmin') throw new InvalidArgumentException('Hanya superadmin yang dapat mengubah status akun.');
+        if (($actor['id'] ?? '') === $id) throw new InvalidArgumentException('Tidak boleh menonaktifkan akun yang sedang digunakan.');
+        $ownsTransaction = !$this->db->inTransaction();
+        if ($ownsTransaction) $this->db->beginTransaction();
+        try {
+            $stmt = $this->db->prepare('SELECT * FROM users WHERE id = :id FOR UPDATE');
+            $stmt->execute(['id' => $id]);
+            $row = $stmt->fetch();
+            if (!$row) throw new InvalidArgumentException('Pengguna tidak ditemukan.');
+            if ($row['role'] === 'superadmin') throw new InvalidArgumentException('Status akun superadmin tidak dapat diubah melalui aksi ini.');
+            if ((bool) ($row['is_active'] ?? true) !== $active) {
+                $this->db->prepare('UPDATE users SET is_active = :active WHERE id = :id')->execute(['id' => $id, 'active' => (int) $active]);
+                $this->logAudit($active ? 'Aktifkan Pengguna' : 'Nonaktifkan Pengguna', ($active ? 'Mengaktifkan kembali' : 'Menonaktifkan') . ' akun "' . $row['name'] . '"; riwayat tugas dan dokumen dipertahankan.');
+            }
+            $user = $this->userById($id);
+            if ($ownsTransaction) $this->db->commit();
+            return $user;
+        } catch (Throwable $error) {
+            if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
+            throw $error;
+        }
+    }
+
+    private function assertActiveAssignee(?string $name, string $label): void
+    {
+        if (trim((string) $name) === '') return;
+        $stmt = $this->db->prepare('SELECT * FROM users WHERE name = :name LIMIT 1');
+        $stmt->execute(['name' => $name]);
+        $user = $stmt->fetch();
+        if (!$user || !(bool) ($user['is_active'] ?? true)) throw new InvalidArgumentException($label . ' harus menggunakan akun aktif. Pilih anggota lain terlebih dahulu.');
     }
 
     public function userById(string $id): array
@@ -478,6 +524,8 @@ final class Repository
 
     public function createTask(array $data): array
     {
+        $this->assertActiveAssignee((string) ($data['pic'] ?? 'Febby'), 'PIC');
+        $this->assertActiveAssignee($data['reviewer'] ?? null, 'Reviewer');
         $id = $data['id'] ?? ('t-' . time());
         $deliverableUrl = $this->normalizeNullableUrl($data['deliverableUrl'] ?? $data['deliverable_url'] ?? null);
         $stmt = $this->db->prepare(
@@ -513,6 +561,11 @@ final class Repository
         $existing = $this->taskById($id);
         $merged = array_merge($existing, $data);
         $reviewAction = (string) ($data['reviewAction'] ?? '');
+        foreach (['pic' => 'PIC', 'reviewer' => 'Reviewer'] as $field => $label) {
+            if (($data[$field] ?? $existing[$field] ?? '') !== ($existing[$field] ?? '') || $reviewAction === 'submit') {
+                $this->assertActiveAssignee($merged[$field] ?? null, $label);
+            }
+        }
         if ($reviewAction === 'submit') {
             $merged['reviewStatus'] = 'submitted';
             $merged['submittedAt'] = time() * 1000;
@@ -585,6 +638,7 @@ final class Repository
 
     public function createMeeting(array $data): array
     {
+        $this->assertActiveAssignee($data['host'] ?? null, 'Penanggung jawab pertemuan');
         $id = $data['id'] ?? ('m-' . time());
         $taskIdValue = array_key_exists('taskId', $data) ? $data['taskId'] : ($data['task_id'] ?? null);
         $taskId = trim((string) $taskIdValue) !== '' ? trim((string) $taskIdValue) : null;
@@ -612,6 +666,7 @@ final class Repository
     public function updateMeeting(string $id, array $data): array
     {
         $existing = $this->meetingRowById($id);
+        if (isset($data['host']) && $data['host'] !== ($existing['host'] ?? '')) $this->assertActiveAssignee($data['host'], 'Penanggung jawab pertemuan');
         $taskIdValue = array_key_exists('taskId', $data) ? $data['taskId'] : ($data['task_id'] ?? $existing['task_id']);
         $taskId = trim((string) $taskIdValue) !== '' ? trim((string) $taskIdValue) : null;
         $phase = array_key_exists('phase', $data) ? (trim((string) $data['phase']) ?: null) : ($existing['phase'] ?? null);
@@ -667,9 +722,6 @@ final class Repository
     {
         $stmt = $this->db->prepare('UPDATE meetings SET berita_acara_at = COALESCE(berita_acara_at, NOW()) WHERE id = :id AND deleted_at IS NULL');
         $stmt->execute(['id' => $id]);
-        if ($stmt->rowCount() === 0) {
-            throw new RuntimeException('Pertemuan tidak ditemukan.');
-        }
         return $this->meetingById($id);
     }
 
@@ -831,6 +883,35 @@ final class Repository
     public function clearAuditLogs(): void
     {
         $this->db->exec('DELETE FROM audit_logs');
+    }
+
+    public function phaseAccessSummary(string $phase): array
+    {
+        if (!in_array($phase, ['tugas1', 'tugas2', 'tugas3'], true)) {
+            throw new InvalidArgumentException('Tahap tugas tidak valid.');
+        }
+        $stmt = $this->db->prepare(
+            'SELECT u.id, u.name, u.initial, u.last_seen_at, u.is_active, a.last_access_at
+             FROM users u
+             LEFT JOIN (
+                 SELECT user_name COLLATE utf8mb4_unicode_ci AS user_name, MAX(occurred_at) AS last_access_at
+                 FROM user_activity_logs WHERE page_name = :phase
+                 GROUP BY user_name COLLATE utf8mb4_unicode_ci
+             ) a ON a.user_name COLLATE utf8mb4_unicode_ci = u.name COLLATE utf8mb4_unicode_ci
+             ORDER BY a.last_access_at DESC, u.name'
+        );
+        $stmt->execute(['phase' => $phase]);
+        return array_map(static fn (array $row): array => [
+            'id' => $row['id'],
+            'name' => $row['name'],
+            'initial' => $row['initial'],
+            'lastSeenAt' => $row['last_seen_at']
+                ? (new DateTimeImmutable($row['last_seen_at'], new DateTimeZone('UTC')))->getTimestamp() * 1000
+                : null,
+            'lastAccessAt' => $row['last_access_at']
+                ? (new DateTimeImmutable($row['last_access_at'], new DateTimeZone('UTC')))->getTimestamp() * 1000
+                : null,
+        ], array_values(array_filter($stmt->fetchAll(), static fn ($row) => (bool) ($row['is_active'] ?? true))));
     }
 
     public function userActivityLogs(): array
@@ -1011,6 +1092,7 @@ final class Repository
             'nim' => $row['nim'],
             'role' => $row['role'],
             'roles' => $row['role'] === 'superadmin' ? ['superadmin', 'koordinator'] : [$row['role']],
+            'isActive' => (bool) ($row['is_active'] ?? true),
             'color' => $row['color'],
             'initial' => $row['initial'],
             'lastLogin' => $row['last_login_at'] ? strtotime($row['last_login_at']) * 1000 : null,

@@ -11,6 +11,10 @@
       </div>
 
       <div class="header-actions">
+        <div class="data-sync-controls">
+          <span id="dataSyncStatus" class="data-sync-status" aria-live="polite">Belum diperbarui</span>
+          <button id="refreshDataBtn" type="button" class="sync-refresh-btn" title="Perbarui data" aria-label="Perbarui data">↻</button>
+        </div>
         <!-- Tombol Lonceng Notifikasi -->
         <div class="notification-wrapper">
           <button id="notificationBtn" class="notification-btn" title="Pemberitahuan">

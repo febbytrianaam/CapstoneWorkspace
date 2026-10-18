@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS berita_acara_drafts (
+  meeting_id VARCHAR(80) PRIMARY KEY,
+  payload LONGTEXT NOT NULL,
+  payload_hash CHAR(64) NOT NULL,
+  revision INT UNSIGNED NOT NULL DEFAULT 1,
+  updated_by VARCHAR(80) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS browser_recovery_backups (
+  id CHAR(64) PRIMARY KEY,
+  owner_id VARCHAR(80) NOT NULL,
+  contents LONGTEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_browser_recovery_owner (owner_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

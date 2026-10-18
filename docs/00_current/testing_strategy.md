@@ -2,9 +2,9 @@
 
 ## Current Test Status
 
-There is no formal automated test suite in the repo at this time.
+The repo has isolated datastore tests and a Playwright browser regression script.
 
-Current practical checks are syntax checks, manual browser QA, and database/API smoke tests.
+Tests use synthetic records and intercepted API requests. The owner has prohibited changes to the live database. Do not run database/API mutations or repository initialization as smoke tests.
 
 ## Commands
 
@@ -31,11 +31,21 @@ node --check js/data.js
 node --check js/rbac.js
 ```
 
-Database/repository smoke check:
+Datastore tests (no database or network):
 
 ```bash
-php -r "require 'backend/Repository.php'; Repository::create(); echo 'ok';"
+node --test tests/store.test.cjs tests/rbac.test.cjs
 ```
+
+Storage/account contracts with PDO doubles only: `php tests/ba-storage.test.php`, `php tests/phase-access.test.php`, and `php tests/user-status.test.php`. They never connect to MySQL.
+
+The owner approved the two-table BA/recovery migration and, separately, migration 007 adding the active-account status column on 18 October 2026. Both have been applied and verified. The owner also authorized one draft-number correction, already completed. None of these approvals permits live test records, further migrations, or the full schema/seed file.
+
+Browser tests: `node tests/workspace-ui.cjs <playwright-module-path>`. The optional module path locates an existing Playwright install; omit it when Playwright resolves normally. PHP and installed Chrome are required. All browser requests, including API calls, are intercepted. Screenshots are saved in an OS temporary folder, not in the live document archive.
+
+Coverage includes server-rejected saves, task deltas/review submission, dirty forms, fast-snapshot startup, role-specific action queues, task/document filters, lazy audit data, refresh failure/retry, BA state, and desktop/mobile layouts. These tests do not prove real MySQL persistence or public Cloudflare behavior.
+
+Latest verified baseline: 14 Node tests; PHP BA-storage, phase-access, and account-status contracts; 21 mocked browser scenario groups at widths 360/390/768/1365px. Synthetic native Chrome PDFs also passed five-page long-table and seven-page documentation layout checks, retaining all 36 long-note paragraphs and both photos. Account status tests never deactivate real members.
 
 HTTP smoke check when server is running:
 
@@ -44,6 +54,18 @@ curl http://localhost:4000
 ```
 
 ## Manual QA Checklist
+
+Synthetic native print regression (no live API/database):
+
+```bash
+node tests/ba-print.cjs <playwright-module-path>
+python tests/check-ba-print.py <generated-directory>/ba-print.pdf
+python tests/check-ba-print.py <generated-directory>/docs-print.pdf
+php tests/ba-storage.test.php
+php tests/user-status.test.php
+```
+
+Requires Chrome, Playwright, pdfplumber, and pypdfium2. Check rendered page PNGs, documentation heading/photo placement, and long-row border closure.
 
 - Login as superadmin.
 - Login as member.

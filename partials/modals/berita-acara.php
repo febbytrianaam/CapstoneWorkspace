@@ -6,6 +6,13 @@
       <button id="baModalCloseBtn" class="modal-close-btn">&times;</button>
     </div>
     <div class="modal-body" style="max-height: 78vh; overflow-y: auto;">
+      <div class="ba-draft-notice">
+        <p id="baDraftStatus" role="status"></p>
+        <div class="ba-draft-actions">
+          <button type="button" id="baDraftReloadBtn" class="btn btn-secondary" hidden>Muat Ulang Draft</button>
+          <button type="button" id="baDraftLocalBtn" class="btn btn-secondary" hidden>Gunakan Versi Perangkat</button>
+        </div>
+      </div>
       <form id="beritaAcaraForm">
         <input type="hidden" id="baMeetingIdInput" />
         <input type="hidden" id="baTaskIdInput" />

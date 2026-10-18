@@ -8,6 +8,7 @@ Implemented:
 
 - Password hash authentication.
 - PHP session-based login.
+- Account-status checks reject inactive login and invalidate session identity on the next API request. Status changes are superadmin-only; current/superadmin accounts are protected. Reactivation does not reset credentials or introduce a session-version registry.
 - Session cookie flags: `httponly`, `samesite=Lax`, and `secure` when HTTPS is detected.
 - Role-based backend permission checks in `backend/api/index.php`.
 - Frontend RBAC for UX in `js/rbac.js`.
