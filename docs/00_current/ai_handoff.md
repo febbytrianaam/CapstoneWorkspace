@@ -36,7 +36,9 @@ Capstone Workspace is a PHP/MySQL coordination app for a Universitas Terbuka Cap
 - Do not expose Cloudflare tunnel tokens, passwords, private meeting links, or real data dumps.
 - Superadmin-only audit/activity visibility is intentional.
 - Members may see a minimal phase-access/presence summary in Tugas 1/2/3, not detailed audit records. Online is approximate app-wide presence, not presence within the selected phase.
+- Keep phase sections ordered as banner, progress summary, team access, then action queues and the task board. Moving these sections must not change saved notes or presence behavior.
 - Member reviewer selection is read-only; superadmin sets reviewers manually.
+- Personal Tindak Lanjut review queues are scoped to the assigned reviewer and exclude their own submissions, which appear in a separate waiting queue. Do not broaden this queue back to every pending review for managers; the separate manager-wide review section remains available. Color/pulse and expanded previews are presentation-only, with no database writes.
 
 ## Key Files And Folders
 

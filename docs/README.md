@@ -55,6 +55,7 @@ Existing project-specific reference notes currently in `docs/`:
 - [2026-10-18 Server BA drafts and browser recovery](30_implemented/2026-10-18-server-ba-drafts/implementation_report.md)
 - [2026-10-18 BA print layout and naming](30_implemented/2026-10-18-ba-print-layout-and-naming/implementation_report.md)
 - [2026-10-18 Member account status](30_implemented/2026-10-18-member-account-status/implementation_report.md)
+- [2026-10-20 Action queue refresh](30_implemented/2026-10-20-action-queue-refresh/implementation_report.md)
 
 For every future meaningful shipped feature, create:
 

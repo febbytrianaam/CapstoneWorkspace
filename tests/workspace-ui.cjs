@@ -163,6 +163,13 @@ async function main() {
     if ((await page.viewportSize()).width < 1024 && !await page.locator('.sidebar').evaluate(el => el.classList.contains('open'))) await page.locator('#sidebarToggleBtn').click();
     await page.locator(`.sidebar-nav [data-target="${target}"]`).click();
     await page.waitForFunction(id => document.querySelector('.page-view.active')?.id === id, target);
+    if (/^tugas[123]$/.test(target)) {
+      assert.equal(await page.locator(`#${target}`).evaluate(el => {
+        const summary = el.querySelector('.progress-note-panel');
+        const access = el.querySelector('.phase-access');
+        return Boolean(summary && access && (summary.compareDocumentPosition(access) & Node.DOCUMENT_POSITION_FOLLOWING));
+      }), true, 'Phase summary must precede team access');
+    }
     if ((await page.viewportSize()).width < 1024) await page.waitForFunction(() => document.querySelector('.sidebar').getBoundingClientRect().right <= 1);
   };
   const openTask = id => page.locator(`#tugas2 .phase-task-board .task-card[data-task-id="${id}"]`).click();
@@ -268,6 +275,17 @@ async function main() {
     assert.equal(fixtures.tasks[0].checklistDone[0], true);
     assert.equal(fixtures.tasks[0].reviewStatus, 'submitted');
     checks.push('role-specific action queues; readonly owner/reviewer; review includes unsaved checklist');
+    await page.locator('.page-view.active [data-work-filter="waiting"]').click();
+    assert.equal(await page.locator('.page-view.active .phase-actions').getAttribute('data-queue'), 'waiting');
+    assert.equal(await page.locator('.phase-task-board [data-task-id="t2-dev-03"]').count(), 1);
+    assert.equal(await page.locator('.page-view.active .task-action-item[data-task-id="t2-dev-03"]').count(), 1);
+    assert.match(await page.locator('.page-view.active .task-action-state').innerText(), /Menunggu Farah/);
+    await page.locator('.page-view.active [data-work-filter="review"]').click();
+    assert.equal(await page.locator('.phase-task-board [data-task-id="t2-dev-03"]').count(), 0, 'My submission is not a review assigned to me');
+    assert.equal(await page.locator('.phase-task-board [data-task-id="t2-review"]').count(), 1);
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.workFilter), 'review', 'Replacing the queue must retain control focus');
+    await page.locator('.page-view.active [data-work-filter="all"]').click();
+    checks.push('own waiting submissions and assigned reviews are separate; category focus survives rerender');
     checks.push('online expires after 90 seconds; hidden tabs do not heartbeat; returning preserves unsaved checklist');
 
     fixtures.user = 'Febby';
@@ -326,12 +344,14 @@ async function main() {
 
     await nav('tugas2');
     await page.locator('.page-view.active .generate-ba-btn[data-meeting-id="qa-meeting-a"]').click();
+    await page.waitForFunction(() => document.querySelector('#baMeetingIdInput').value === 'qa-meeting-a' && document.querySelector('#beritaAcaraModalBackdrop').classList.contains('active') && !document.querySelector('#baDraftSaveBtn').disabled);
     const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
     await page.locator('#baDocImageInput').setInputFiles({ name: 'qa.png', mimeType: 'image/png', buffer: image });
     await page.waitForFunction(() => document.querySelectorAll('#baDocImagePreviews img').length === 1);
     await page.evaluate(() => { window.qaConfirm = true; });
     await page.locator('#baModalCloseBtn').click();
     await page.locator('.page-view.active .generate-ba-btn[data-meeting-id="qa-meeting-b"]').click();
+    await page.waitForFunction(() => document.querySelector('#baMeetingIdInput').value === 'qa-meeting-b' && document.querySelector('#beritaAcaraModalBackdrop').classList.contains('active') && !document.querySelector('#baDraftSaveBtn').disabled);
     assert.equal(await page.locator('#baDocImagePreviews img').count(), 0);
     await page.locator('#baJudulInput').press('Control+a');
     await page.locator('#baJudulInput').press('Backspace');
@@ -341,7 +361,7 @@ async function main() {
 
     const openBa = async id => {
       await page.locator(`.page-view.active .generate-ba-btn[data-meeting-id="${id}"]`).click();
-      await page.waitForFunction(() => !document.querySelector('#baDraftSaveBtn').disabled);
+      await page.waitForFunction(meetingId => document.querySelector('#baMeetingIdInput').value === meetingId && document.querySelector('#beritaAcaraModalBackdrop').classList.contains('active') && !document.querySelector('#baDraftSaveBtn').disabled, id);
     };
     await openBa('qa-meeting-a');
     await page.locator('#baJudulInput').fill('Judul BA dari server');
@@ -514,6 +534,53 @@ async function main() {
     await farahStatus().click();
     await page.waitForFunction(() => capstoneStore.getUserById('Farah').isActive === true);
     checks.push('superadmin deactivation/reactivation; rejected status retains data; inactive assignees readonly; four-member BA roster and dash absence; historical records retained');
+
+    const originalTasksForActionDesign = fixtures.tasks;
+    fixtures.tasks = [...fixtures.tasks, ...Array.from({ length: 5 }, (_, i) => ({
+      ...fixtures.tasks[0], id: `qa-action-${i}`, phase: 'tugas2', pic: i === 4 ? 'Rival' : 'Febby', reviewer: i === 4 ? 'Febby' : 'Cintia',
+      title: ['Perancangan Sistem dan Database', 'Pengembangan dan Penyempurnaan ShifaStock', 'Dokumentasi Hasil Implementasi dan Pengujian Sistem Persediaan Obat', 'Review Ringkasan Kebutuhan Sistem', 'Validasi Proses Bisnis Klinik'][i],
+      status: 'Sedang Dikerjakan', reviewStatus: i >= 3 ? 'submitted' : 'none', meetings: [], checklistDone: [true, i === 2]
+    }))];
+    await page.reload(); await ready(); await nav('tugas2');
+    const actionSection = () => page.locator('#tugas2 .phase-actions');
+    const writesBeforeDesign = fixtures.calls.filter(call => ['tasks', 'users', 'ba-drafts'].includes(call.resource) && ['PUT', 'POST', 'DELETE'].includes(call.method)).length;
+    await actionSection().locator('[data-work-filter="mine"]').click();
+    assert.equal(await actionSection().locator('.task-action-item').count(), 3);
+    await actionSection().locator('[data-expand-work]').click();
+    assert.equal(await actionSection().locator('.task-action-item').count(), 4);
+    assert.equal(await actionSection().locator('[data-expand-work]').getAttribute('aria-expanded'), 'true');
+    await actionSection().locator('[data-expand-work]').click();
+    assert.equal(await actionSection().locator('.task-action-item').count(), 3);
+    for (const width of [360, 390, 768, 1365]) {
+      await page.setViewportSize({ width, height: 900 });
+      await actionSection().scrollIntoViewIfNeeded();
+      await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth + 1);
+      await actionSection().evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, `action queue width ${width}`);
+      assert.equal(await actionSection().locator('.phase-action-tab').count(), 4);
+      await actionSection().screenshot({ path: path.join(output, `action-queues-${width}.png`), animations: 'disabled' });
+    }
+    await actionSection().locator('[data-work-filter="waiting"]').click();
+    assert.equal(await actionSection().locator('.task-action-item').count(), 1);
+    await actionSection().screenshot({ path: path.join(output, 'action-queues-waiting.png'), animations: 'disabled' });
+    await actionSection().locator('[data-work-filter="review"]').click();
+    assert.equal(await actionSection().locator('.task-action-item[data-task-id="qa-action-4"]').count(), 1);
+    assert.equal(await actionSection().locator('.task-action-item[data-task-id="qa-action-3"]').count(), 0);
+    await actionSection().locator('.task-action-item').first().click();
+    assert.equal(await page.locator('#taskModalBackdrop').isVisible(), true);
+    await closeTask();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await actionSection().locator('.has-attention').first().evaluate(el => getComputedStyle(el, '::after').animationName), 'none');
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    await actionSection().screenshot({ path: path.join(output, 'action-queues-dark.png'), animations: 'disabled' });
+    await page.evaluate(() => document.documentElement.removeAttribute('data-theme'));
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    assert.equal(await actionSection().locator('.has-attention').first().evaluate(el => getComputedStyle(el, '::after').animationIterationCount), '2');
+    assert.equal(fixtures.calls.filter(call => ['tasks', 'users', 'ba-drafts'].includes(call.resource) && ['PUT', 'POST', 'DELETE'].includes(call.method)).length, writesBeforeDesign, 'Queue selection/expansion must not write business data');
+    fixtures.tasks = originalTasksForActionDesign;
+    await page.setViewportSize({ width: 1365, height: 900 });
+    await page.reload(); await ready();
+    checks.push('four colored action queues; real expand/collapse; task opening; responsive light/dark; reduced motion; no business writes');
 
     const layout = [];
     for (const width of [360, 390, 768, 1365]) {

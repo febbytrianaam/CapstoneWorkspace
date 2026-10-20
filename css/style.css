@@ -2583,8 +2583,9 @@ body.sidebar-collapsed .theme-toggle-btn {
   flex-wrap: wrap;
 }
 
-.phase-actions-header h3 { margin: 0; font-size: 1rem; }
-.phase-action-tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.75rem 0; }
+.phase-actions-header h3 { display: flex; align-items: center; gap: 0.6rem; margin: 0; font-size: 1rem; }
+.phase-actions-header h3::before { content: ''; width: 4px; height: 20px; background: var(--ut-blue-primary); border-radius: 2px; }
+.phase-action-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.7rem; margin: 1rem 0 1.1rem; }
 .work-filter-btn {
   display: inline-flex;
   align-items: center;
@@ -2601,24 +2602,78 @@ body.sidebar-collapsed .theme-toggle-btn {
 }
 .work-filter-btn strong { min-width: 1.25rem; text-align: center; }
 .work-filter-btn.is-active { border-color: var(--ut-blue-primary); color: var(--ut-blue-primary); background: var(--ut-blue-soft); }
+.phase-action-tab.is-mine, .task-action-item.is-mine { --action-color: #1D4ED8; --action-tint: #EFF6FF; }
+.phase-action-tab.is-revision, .task-action-item.is-revision { --action-color: #BE123C; --action-tint: #FFF1F2; }
+.phase-action-tab.is-review, .task-action-item.is-review { --action-color: #0F766E; --action-tint: #F0FDFA; }
+.phase-action-tab.is-waiting, .task-action-item.is-waiting { --action-color: #B45309; --action-tint: #FFFBEB; }
+.phase-actions .phase-action-tab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.55rem;
+  min-width: 0;
+  min-height: 106px;
+  padding: 0.85rem 1rem 1rem;
+  border-radius: 8px;
+  text-align: left;
+  transition: background-color 150ms, border-color 150ms;
+}
+.phase-action-tab-label { min-height: 2.6em; font-size: 0.78rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.phase-actions .phase-action-tab strong { min-width: 0; font-size: 1.55rem; line-height: 1; font-variant-numeric: tabular-nums; color: var(--action-color); }
+.phase-action-tab::after { content: ''; position: absolute; left: 1rem; right: 1rem; bottom: 0; height: 3px; background: var(--action-color); opacity: 0.25; }
+.phase-actions .phase-action-tab.is-active { background: var(--action-tint); border-color: var(--action-color); color: var(--action-color); }
+.phase-action-tab.is-active::after { opacity: 1; }
+.phase-actions .phase-action-tab:hover { background: var(--action-tint); border-color: var(--action-color); }
+.phase-action-tab.has-attention::after { animation: action-queue-pulse 2s ease-in-out 2; }
+@keyframes action-queue-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; box-shadow: 0 -3px 0 var(--action-tint); } }
+.phase-actions .phase-actions-reset, .phase-actions .phase-actions-more { background: transparent; color: var(--ut-blue-primary); border: 0; padding: 0.4rem 0; font-weight: 600; gap: 0.5rem; }
+.phase-actions-reset:hover, .phase-actions-more:hover { text-decoration: underline; }
+.phase-action-list-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-light); }
+.phase-action-list-heading strong { font-size: 0.82rem; }
+.phase-action-list-heading > span { font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap; }
 .task-action-item {
   display: grid;
-  grid-template-columns: minmax(80px, 125px) minmax(0, 1fr) 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, 150px) 112px;
   align-items: center;
-  gap: 0.75rem;
-  min-height: 64px;
+  gap: 1.5rem;
+  min-height: 104px;
   width: 100%;
-  padding: 0.65rem 0;
+  padding: 1rem 0.6rem;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--border-light);
   text-align: left;
   color: var(--text-main);
+  font: inherit;
   cursor: pointer;
 }
-.task-action-item strong { display: block; font-size: 0.85rem; overflow-wrap: anywhere; }
-.task-action-item small { display: block; margin-top: 0.25rem; color: var(--text-secondary); font-size: 0.75rem; }
-.task-action-item .task-card-code { align-self: center; justify-self: start; }
+.task-action-item:hover { background: var(--bg-surface-hover); }
+.task-action-main { min-width: 0; }
+.task-action-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.4rem; font-size: 0.7rem; color: var(--text-secondary); }
+.task-action-item .task-card-code { margin: 0; }
+.task-action-title { display: block; font-size: 0.88rem; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+.task-action-state { display: block; margin-top: 0.3rem; color: var(--action-color); font-size: 0.75rem; line-height: 1.45; overflow-wrap: anywhere; }
+.task-action-checklist { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.task-action-checklist > span { display: flex; justify-content: space-between; gap: 0.75rem; color: var(--text-secondary); font-size: 0.72rem; }
+.task-action-checklist strong { color: var(--text-main); font-variant-numeric: tabular-nums; }
+.task-action-checklist progress { display: block; width: 100%; height: 5px; border: 0; border-radius: 2px; overflow: hidden; background: var(--border-light); accent-color: var(--action-color); }
+.task-action-checklist progress::-webkit-progress-bar { background: var(--border-light); border-radius: 2px; }
+.task-action-checklist progress::-webkit-progress-value { background: var(--action-color); border-radius: 2px; }
+.task-action-checklist progress::-moz-progress-bar { background: var(--action-color); border-radius: 2px; }
+.task-action-open { display: flex; align-items: center; justify-content: flex-end; gap: 0.65rem; font-size: 0.75rem; font-weight: 600; color: var(--action-color); }
+.task-action-open > span:last-child { font-size: 1.6rem; line-height: 1; }
+.phase-action-empty { margin: 0; padding: 1.5rem 0; color: var(--text-secondary); font-size: 0.85rem; border-bottom: 1px solid var(--border-light); }
+.phase-actions-more { margin-top: 0.65rem; }
+[data-theme="dark"] .phase-action-tab.is-mine, [data-theme="dark"] .task-action-item.is-mine { --action-color: #93C5FD; --action-tint: #172B47; }
+[data-theme="dark"] .phase-action-tab.is-revision, [data-theme="dark"] .task-action-item.is-revision { --action-color: #FDA4AF; --action-tint: #3B202C; }
+[data-theme="dark"] .phase-action-tab.is-review, [data-theme="dark"] .task-action-item.is-review { --action-color: #5EEAD4; --action-tint: #153635; }
+[data-theme="dark"] .phase-action-tab.is-waiting, [data-theme="dark"] .task-action-item.is-waiting { --action-color: #FCD34D; --action-tint: #393020; }
+@media (prefers-reduced-motion: reduce) {
+  .phase-action-tab.has-attention::after { animation: none; }
+  .phase-actions .phase-action-tab { transition: none; }
+}
 .phase-view-toolbar { margin-bottom: 0.75rem; }
 .phase-result-count { font-size: 0.8rem; color: var(--text-secondary); }
 .task-view-switch { display: flex; padding: 3px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-card); }
@@ -2644,10 +2699,12 @@ body.sidebar-collapsed .theme-toggle-btn {
 @media (max-width: 760px) {
   .task-list-row.task-card { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
   .task-list-tail { flex-direction: row; flex-wrap: wrap; align-items: center; }
-  .task-action-item { grid-template-columns: minmax(0, 1fr) 16px; gap: 0.35rem; }
-  .task-action-item .task-card-code { grid-column: 1; }
-  .task-action-item > span:nth-child(2) { grid-column: 1; }
-  .task-action-item > span:last-child { grid-column: 2; grid-row: 1 / 3; }
+  .phase-action-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .task-action-item { grid-template-columns: minmax(0, 1fr) 20px; gap: 0.75rem 0.6rem; padding: 0.85rem 0; }
+  .task-action-main { grid-column: 1; }
+  .task-action-checklist { grid-column: 1; max-width: 150px; }
+  .task-action-open { grid-column: 2; grid-row: 1 / 3; }
+  .task-action-open > span:first-child { display: none; }
   .document-archive-toolbar .search-filter-group { width: 100%; }
   #documentArchiveSearch { flex: 1 1 100%; width: 100%; min-width: 0; }
 }
@@ -2656,7 +2713,6 @@ body.sidebar-collapsed .theme-toggle-btn {
   .data-sync-controls { flex-direction: column-reverse; gap: 2px; }
   .data-sync-status { max-width: 82px; font-size: 0.6rem; text-align: center; }
   .header-actions { gap: 0.4rem; min-width: 0; }
-  .phase-action-tabs > button { flex: 1 1 120px; }
   .modal-footer .btn { min-height: 40px; }
   .toolbar .search-filter-group { width: 100%; }
   .toolbar .select-filter { min-width: 0; flex: 1 1 145px; max-width: 100%; }

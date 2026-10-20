@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let activePriorityFilter = 'SEMUA';
   let activeReviewFilter = 'SEMUA';
   let activeWorkFilter = 'all';
+  const expandedActionQueues = new Set();
   let phaseViewMode = localStorage.getItem('capstone_task_view_v1') || (window.matchMedia('(max-width: 640px)').matches ? 'list' : 'kanban');
   let showArchivedTasks = false;
 
@@ -1604,31 +1605,59 @@ document.addEventListener('DOMContentLoaded', () => {
   function getWorkTasks(type, tasks, user = window.capstoneStore.getCurrentUser()) {
     const manager = ['superadmin', 'koordinator'].includes(user?.role);
     return tasks.filter(task => !task.archivedAt).filter(task => {
-      if (type === 'mine') return isTaskPic(task, user) && !isTaskCompletionVerified(task);
+      if (type === 'mine') return isTaskPic(task, user) && !isTaskCompletionVerified(task) && task.reviewStatus !== 'submitted';
+      if (type === 'waiting') return isTaskPic(task, user) && task.reviewStatus === 'submitted' && !isTaskCompletionVerified(task);
       if (type === 'revision') return task.reviewStatus === 'revision_requested' && (manager || isTaskPic(task, user));
-      if (type === 'review') return task.reviewStatus === 'submitted' && canReviewTask(task, user);
+      if (type === 'review') return task.reviewStatus === 'submitted' && task.reviewer === user?.name && !isTaskPic(task, user) && canReviewTask(task, user);
       return true;
     }).sort((a, b) => (a.dueAt || Number.MAX_SAFE_INTEGER) - (b.dueAt || Number.MAX_SAFE_INTEGER));
   }
 
   function renderPhaseActionSection(phaseKey, tasks, user) {
-    const modes = [['mine', 'Tugas saya'], ['revision', 'Perlu revisi'], ['review', 'Perlu saya review']];
-    const previewMode = activeWorkFilter === 'all' ? 'mine' : activeWorkFilter;
-    const selectedTasks = getWorkTasks(previewMode, tasks, user);
-    return `<section class="phase-actions" aria-label="Tindak lanjut tugas">
+    const modes = [
+      { key: 'mine', label: 'Tugas saya', empty: 'Tidak ada tugas aktif untuk kamu.' },
+      { key: 'revision', label: 'Perlu revisi', empty: 'Tidak ada tugas yang perlu direvisi.' },
+      { key: 'review', label: 'Perlu saya review', empty: 'Tidak ada pekerjaan yang menunggu pemeriksaanmu.' },
+      { key: 'waiting', label: 'Tugas saya menunggu review', empty: 'Belum ada tugasmu yang menunggu review.' }
+    ].map(mode => ({ ...mode, tasks: getWorkTasks(mode.key, tasks, user) }));
+    const selected = modes.find(mode => mode.key === activeWorkFilter) || modes.find(mode => mode.tasks.length) || modes[0];
+    const selectedTasks = selected.tasks;
+    const queueKey = `${phaseKey}:${selected.key}`;
+    const expanded = expandedActionQueues.has(queueKey);
+    return `<section class="phase-actions" aria-label="Tindak lanjut tugas" data-queue="${selected.key}">
       <div class="phase-actions-header"><h3>Tindak Lanjut</h3>
-        <button type="button" class="work-filter-btn ${activeWorkFilter === 'all' ? 'is-active' : ''}" data-work-filter="all" aria-pressed="${activeWorkFilter === 'all'}">Semua tugas</button>
+        <button type="button" class="work-filter-btn phase-actions-reset" data-work-filter="all">Lihat semua tugas <span aria-hidden="true">\u2192</span></button>
       </div>
       <div class="phase-action-tabs" role="group" aria-label="Pilih pekerjaan">
-        ${modes.map(([key, label]) => `<button type="button" class="work-filter-btn ${activeWorkFilter === key ? 'is-active' : ''}" data-work-filter="${key}" aria-pressed="${activeWorkFilter === key}">${label}<strong>${getWorkTasks(key, tasks, user).length}</strong></button>`).join('')}
+        ${modes.map(mode => `<button type="button" class="work-filter-btn phase-action-tab is-${mode.key} ${selected.key === mode.key ? 'is-active' : ''} ${mode.tasks.length && ['review', 'revision'].includes(mode.key) ? 'has-attention' : ''}" data-work-filter="${mode.key}" aria-pressed="${selected.key === mode.key}">
+          <span class="phase-action-tab-label">${mode.label}</span><strong>${mode.tasks.length}</strong>
+        </button>`).join('')}
       </div>
-      <div class="phase-action-preview">
-        ${selectedTasks.slice(0, 3).map(task => `<button type="button" class="task-action-item" data-task-id="${escapeHtml(task.id)}">
-          <span class="task-card-code">${escapeHtml(task.id)}</span><span><strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(getTaskNextAction(task).title)}</small></span><span aria-hidden="true">›</span>
-        </button>`).join('') || '<p class="muted-empty">Tidak ada tugas pada bagian ini.</p>'}
+      <div class="phase-action-list-heading"><strong>${selected.label}</strong><span>${selectedTasks.length} tugas</span></div>
+      <div class="phase-action-preview" id="actionQueue-${phaseKey}">
+        ${(expanded ? selectedTasks : selectedTasks.slice(0, 3)).map(task => renderPhaseActionItem(task, selected.key)).join('') || `<p class="phase-action-empty">${selected.empty}</p>`}
       </div>
-      ${selectedTasks.length > 3 ? `<button type="button" class="work-filter-btn" data-work-filter="${previewMode}">Tampilkan ${selectedTasks.length} tugas</button>` : ''}
+      ${selectedTasks.length > 3 ? `<button type="button" class="work-filter-btn phase-actions-more" data-expand-work="${selected.key}" aria-expanded="${expanded}" aria-controls="actionQueue-${phaseKey}">${expanded ? 'Tampilkan lebih sedikit' : `Lihat semua ${selectedTasks.length} tugas`} <span aria-hidden="true">${expanded ? '\u2191' : '\u2193'}</span></button>` : ''}
     </section>`;
+  }
+
+  function renderPhaseActionItem(task, mode) {
+    const total = (task.checklist || []).length;
+    const done = (task.checklistDone || []).slice(0, total).filter(Boolean).length;
+    const next = getTaskNextAction(task);
+    const needsAssignment = next.title === 'Penanggung jawab perlu diperbarui';
+    const tone = needsAssignment || task.reviewStatus === 'revision_requested' ? 'revision' : mode;
+    const state = needsAssignment ? next.title : mode === 'waiting' ? `Menunggu ${task.reviewer || 'reviewer'}` : mode === 'review' ? 'Siap diperiksa' : next.title;
+    const action = mode === 'review' ? 'Periksa' : mode === 'waiting' ? 'Lihat pengajuan' : task.reviewStatus === 'revision_requested' ? 'Perbaiki' : 'Buka tugas';
+    return `<button type="button" class="task-action-item is-${tone}" data-task-id="${escapeHtml(task.id)}" aria-label="${escapeHtml(`${action}: ${task.title}`)}">
+      <span class="task-action-main">
+        <span class="task-action-meta"><span class="task-card-code">${escapeHtml(task.id)}</span>${mode === 'review' || mode === 'revision' ? `<span>PIC: ${escapeHtml(task.pic)}</span>` : ''}</span>
+        <strong class="task-action-title">${escapeHtml(task.title)}</strong>
+        <span class="task-action-state">${escapeHtml(state)}</span>
+      </span>
+      <span class="task-action-checklist">${total ? `<span>Checklist <strong>${done}/${total}</strong></span><progress max="${total}" value="${done}" aria-label="${escapeHtml(`Checklist ${task.id}: ${done} dari ${total}`)}"></progress>` : '<span>Tanpa checklist</span>'}</span>
+      <span class="task-action-open"><span>${action}</span><span aria-hidden="true">\u203a</span></span>
+    </button>`;
   }
 
   function loadProgressNoteCollapseState() {
@@ -3109,6 +3138,17 @@ document.addEventListener('DOMContentLoaded', () => {
         pageView.querySelector('.phase-actions').outerHTML = renderPhaseActionSection(phaseKey, window.capstoneStore.getByPhase(phaseKey), window.capstoneStore.getCurrentUser());
         bindPhaseActionEvents(pageView, phaseKey);
         refreshKanbanBoard(phaseKey);
+        pageView.querySelector(`.phase-actions [data-work-filter="${activeWorkFilter}"]`)?.focus({ preventScroll: true });
+      });
+    });
+    pageView.querySelectorAll('.phase-actions [data-expand-work]').forEach(button => {
+      button.addEventListener('click', () => {
+        const key = `${phaseKey}:${button.dataset.expandWork}`;
+        if (expandedActionQueues.has(key)) expandedActionQueues.delete(key);
+        else expandedActionQueues.add(key);
+        pageView.querySelector('.phase-actions').outerHTML = renderPhaseActionSection(phaseKey, window.capstoneStore.getByPhase(phaseKey), window.capstoneStore.getCurrentUser());
+        bindPhaseActionEvents(pageView, phaseKey);
+        pageView.querySelector('.phase-actions [data-expand-work]')?.focus({ preventScroll: true });
       });
     });
     pageView.querySelectorAll('.task-action-item').forEach(button => {
@@ -3263,9 +3303,9 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       </div>
 
-      ${renderPhaseAccess(phaseKey)}
-
       ${renderProgressNoteSection(phaseKey, currentUser)}
+
+      ${renderPhaseAccess(phaseKey)}
 
       ${renderPhaseActionSection(phaseKey, allPhaseTasks, currentUser)}
 

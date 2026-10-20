@@ -35,6 +35,7 @@ Datastore tests (no database or network):
 
 ```bash
 node --test tests/store.test.cjs tests/rbac.test.cjs
+node --test tests/action-queues.test.cjs
 ```
 
 Storage/account contracts with PDO doubles only: `php tests/ba-storage.test.php`, `php tests/phase-access.test.php`, and `php tests/user-status.test.php`. They never connect to MySQL.
@@ -45,7 +46,7 @@ Browser tests: `node tests/workspace-ui.cjs <playwright-module-path>`. The optio
 
 Coverage includes server-rejected saves, task deltas/review submission, dirty forms, fast-snapshot startup, role-specific action queues, task/document filters, lazy audit data, refresh failure/retry, BA state, and desktop/mobile layouts. These tests do not prove real MySQL persistence or public Cloudflare behavior.
 
-Latest verified baseline: 14 Node tests; PHP BA-storage, phase-access, and account-status contracts; 21 mocked browser scenario groups at widths 360/390/768/1365px. Synthetic native Chrome PDFs also passed five-page long-table and seven-page documentation layout checks, retaining all 36 long-note paragraphs and both photos. Account status tests never deactivate real members.
+Latest verified baseline: 19 Node tests; PHP BA-storage, phase-access, and account-status contracts; 23 mocked browser scenario groups at widths 360/390/768/1365px. Synthetic native Chrome PDFs also passed five-page long-table and seven-page documentation layout checks, retaining all 36 long-note paragraphs and both photos. Account status tests never deactivate real members. Action queues additionally cover own waiting versus assigned reviews, preview expansion, dark mode, focus, and reduced-motion suppression of the bounded highlight pulse.
 
 HTTP smoke check when server is running:
 
@@ -78,6 +79,9 @@ Requires Chrome, Playwright, pdfplumber, and pypdfium2. Check rendered page PNGs
 - Verify non-PIC sees read-only task status/checklist.
 - Verify reviewer cannot be changed by member.
 - Verify review submit, cancel, approve, and request revision flows.
+- Verify own submitted tasks appear under Tugas saya menunggu review, not Perlu saya review. Personal reviews require the assigned reviewer, including for superadmin; broader management remains in the existing review section.
+- Verify action-preview expansion, keyboard focus, light/dark layout, and disabled pulse under reduced-motion settings.
+- Verify the progress summary precedes Akses Terakhir Tim in phase views; intercepted browser navigation asserts their DOM order.
 - Verify completed tasks do not appear in dashboard personal active task list.
 - Verify Arsip Dokumen view/download/edit/delete according to role.
 - Verify Berita Acara preview opens in a new tab and prints portrait.

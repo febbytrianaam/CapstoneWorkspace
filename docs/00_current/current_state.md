@@ -15,11 +15,13 @@
 - Dashboard summaries, personal task section, review queue, meetings, workload, charts.
 - Kanban task board with status, PIC, reviewer, review workflow, checklist, dates, archive behavior.
 - Phase progress notes with admin input and member read-only visibility.
+- In Tugas 1/2/3, the progress summary appears directly below the phase banner and above Akses Terakhir Tim; note content, collapse behavior, and permissions are unchanged.
 - Project guide uploads in Alur Kerja.
 - Arsip Dokumen with category filter, upload, edit metadata, view, download, and delete.
 - Berita Acara form, preview in new tab, printable portrait output, manual BA upload linked to meetings.
 - Superadmin-only audit and user activity visibility.
 - Phase action queues, contextual task next steps, task-code search and review filters, Kanban/list modes, archive search/sort, protected forms, explicit refresh status, and lazy audit loading.
+- Tindak Lanjut now distinguishes own active work, revisions, assigned personal reviews, and own submissions waiting for review. Colored counts, brief reduced-motion-aware highlights, checklist ratios, and expandable previews provide a clearer daily work surface without changing task data or permissions.
 - Datastore mutations await server confirmation before updating local business state; task edits send deltas instead of meeting snapshots.
 - Isolated tests in `tests/store.test.cjs` and `tests/workspace-ui.cjs`.
 - Tugas 1/2/3 show team phase access with full WIB timestamps and approximate app-wide Online/Offline presence. Members receive only the minimal summary, not audit history or account management.
