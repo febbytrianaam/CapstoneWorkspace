@@ -42,7 +42,7 @@ fixtures.tasks[0].meetings = ['qa-meeting-a', 'qa-meeting-b'].map((id, i) => ({
   id, taskId: 't2-dev-03', phase: 'tugas2', title: `Pertemuan QA ${i + 1}`, date: '2026-10-17T19:00',
   endDate: '2026-10-17T20:00', host: 'Rival', hasBeritaAcara: false, notes: '', url: ''
 }));
-const assets = Object.fromEntries(['js/app.js', 'js/data.js', 'js/rbac.js', 'css/style.css'].map(file => [`/${file}`, fs.readFileSync(path.join(root, file))]));
+const assets = Object.fromEntries(['js/app.js', 'js/data.js', 'js/rbac.js', 'js/task-reports.js', 'js/task-reports-ui.js', 'js/vendor/exceljs-4.4.0.min.js', 'css/style.css'].map(file => [`/${file}`, fs.readFileSync(path.join(root, file))]));
 const output = fs.mkdtempSync(path.join(os.tmpdir(), 'capstone-ui-'));
 console.log(`Screenshots: ${output}`);
 
@@ -131,6 +131,11 @@ async function main() {
         if (url.searchParams.get('include_logs') !== '0') Object.assign(data, { auditLogs: [], userActivities: [] });
         return route.fulfill({ json: { ok: true, data } });
       }
+      if (resource === 'task-reports') {
+        if (user.role !== 'superadmin') return route.fulfill({ status: 403, json: { ok: false, message: 'Superadmin saja.' } });
+        const phase = url.searchParams.get('phase');
+        return route.fulfill({ json: { ok: true, data: { phase, generatedAt: Date.now(), generatedBy: user.name, tasks: fixtures.tasks.filter(t => t.phase === phase), progressNote: { content: 'Progress sintetis\nDua baris', updatedAt: Date.now() } } } });
+      }
       if (method === 'GET') return route.fulfill({ json: { ok: true, data: resource === 'users' ? fixtures.users : resource === 'document-archives' ? fixtures.archives : [] } });
       if (resource === 'users' && method === 'PUT' && body.action === 'set_status') {
         const target = fixtures.users[url.searchParams.get('id')];
@@ -193,6 +198,76 @@ async function main() {
     assert.equal(await page.locator('.task-list-row').count(), fixtures.tasks.length);
     checks.push('task ID search preserves focus; reset filters; list view');
 
+    const reportWritesBefore = fixtures.calls.filter(call => ['tasks', 'meetings', 'users', 'progress-notes'].includes(call.resource) && call.method !== 'GET').length;
+    await page.locator('#tugas2 .phase-task-report-btn').click();
+    await page.waitForFunction(() => document.querySelector('#taskReportPhase').value === 'tugas2' && document.querySelector('#reports').getAttribute('aria-busy') === 'false');
+    assert.equal(await page.locator('#taskReportBody .report-table tbody tr').count(), fixtures.tasks.length);
+    await page.locator('#taskReportArchive').selectOption('archived');
+    assert.match(await page.locator('#taskReportBody').innerText(), /Tidak ada tugas sesuai filter/);
+    await page.locator('#taskReportArchive').selectOption('active');
+    await page.locator('#taskReportStatus').selectOption('Selesai');
+    assert.equal(await page.locator('#taskReportBody .report-table tbody tr').count(), 1);
+    await page.locator('#taskReportStatus').selectOption('');
+    await page.locator('#taskReportReview').selectOption('revision_requested');
+    assert.equal(await page.locator('#taskReportBody .report-table tbody tr').count(), 1);
+    assert.match(await page.locator('#taskReportBody').innerText(), /Perlu revisi/);
+    await page.locator('#taskReportPic').selectOption('Cintia');
+    assert.match(await page.locator('#taskReportBody').innerText(), /Tidak ada tugas sesuai filter/);
+    await page.locator('#taskReportPic').selectOption('');
+    await page.locator('#taskReportReview').selectOption('');
+    const originalReportTitle = fixtures.tasks[0].title;
+    fixtures.tasks[0].title = 'Judul terbaru dari server untuk laporan';
+    const downloadPromise = page.waitForEvent('download');
+    await page.locator('#taskReportExcel').click();
+    const download = await downloadPromise;
+    assert.match(download.suggestedFilename(), /^Laporan-tugas2-\d+-WIB\.xlsx$/);
+    const excelPath = path.join(output, download.suggestedFilename()); await download.saveAs(excelPath);
+    const ExcelJS = require('../js/vendor/exceljs-4.4.0.min.js');
+    const workbook = new ExcelJS.Workbook(); await workbook.xlsx.load(fs.readFileSync(excelPath));
+    let exportedLatestTitle;
+    workbook.getWorksheet('Tugas').eachRow(row => { if (row.getCell(1).value === 't2-dev-03') exportedLatestTitle = row.getCell(2).value; });
+    assert.equal(exportedLatestTitle, fixtures.tasks[0].title, 'Export must use a fresh report response, not the cached Kanban title');
+    const popupPromise = page.waitForEvent('popup');
+    await page.locator('#taskReportPreview').click();
+    const preview = await popupPromise;
+    await preview.locator('#taskReportPrint').waitFor();
+    assert.match(await preview.locator('body').innerText(), /Judul terbaru dari server/);
+    assert.match(await preview.locator('body').innerText(), /Progress sintetis\nDua baris/);
+    await preview.evaluate(() => { window.print = () => { window.qaReportPrinted = true; }; });
+    await preview.locator('#taskReportPrint').click();
+    assert.equal(await preview.evaluate(() => window.qaReportPrinted), true);
+    await preview.pdf({ path: path.join(output, 'task-report.pdf'), preferCSSPageSize: true, printBackground: true });
+    await preview.screenshot({ path: path.join(output, 'task-report-preview.png'), fullPage: true });
+    await preview.close();
+    for (const phase of ['tugas1', 'tugas3', 'tugas2']) {
+      await page.locator('#taskReportPhase').selectOption(phase);
+      await page.waitForFunction(() => document.querySelector('#reports').getAttribute('aria-busy') === 'false');
+      assert.match(await page.locator('#taskReportBody > h3').innerText(), new RegExp(`Tugas ${phase.slice(-1)}`));
+    }
+    fixtures.fail.add('task-reports:GET');
+    await page.locator('#taskReportRefresh').click();
+    await page.waitForFunction(() => document.querySelector('#taskReportFeedback').textContent.includes('QA:'));
+    fixtures.fail.delete('task-reports:GET');
+    await page.locator('#taskReportRefresh').click();
+    await page.waitForFunction(() => document.querySelector('#reports').getAttribute('aria-busy') === 'false');
+    await page.evaluate(() => { window.qaOriginalOpen = window.open; window.open = () => null; });
+    await page.locator('#taskReportPreview').click();
+    assert.match(await page.locator('#taskReportFeedback').innerText(), /diblokir/);
+    await page.evaluate(() => { window.open = window.qaOriginalOpen; });
+    await page.locator('#taskReportRefresh').click();
+    await page.waitForFunction(() => document.querySelector('#reports').getAttribute('aria-busy') === 'false');
+    for (const width of [360, 390, 768, 1365]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth + 1);
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+      assert.equal(await page.locator('#reports h2').evaluate(el => el.getBoundingClientRect().top >= document.querySelector('.top-header').getBoundingClientRect().bottom), true, 'Report heading must remain below the sticky topbar');
+      await page.screenshot({ path: path.join(output, `task-report-${width}.png`), animations: 'disabled', fullPage: true });
+    }
+    assert.equal(fixtures.calls.filter(call => ['tasks', 'meetings', 'users', 'progress-notes'].includes(call.resource) && call.method !== 'GET').length, reportWritesBefore);
+    fixtures.tasks[0].title = originalReportTitle;
+    await nav('tugas2');
+    checks.push('superadmin phase reports; fresh real XLSX and print/PDF; filters and empty phases; failure retry; popup blocked; mobile layouts; no business writes');
+
     await openTask('t2-dev-03');
     await page.locator('#taskDescInput').fill('Input tidak boleh hilang');
     await page.evaluate(() => { window.qaConfirm = false; });
@@ -217,6 +292,9 @@ async function main() {
     fixtures.user = 'Rival';
     await page.reload(); await ready();
     assert.equal(await page.evaluate(() => capstoneStore.getCurrentUser().role), 'member');
+    assert.equal(await page.locator('#navReportsBtn').isVisible(), false);
+    assert.equal(await page.evaluate(() => RBAC.canPage(capstoneStore.getCurrentUser(), 'reports')), false);
+    assert.equal(await page.evaluate(async () => (await fetch('backend/api/index.php?resource=task-reports&phase=tugas2')).status), 403);
     await nav('tugas2');
     await page.locator('#tugas2 .phase-access time').first().waitFor();
     const accessRow = name => page.locator('#tugas2 .phase-access-list li').filter({ has: page.locator('strong', { hasText: name }) });
@@ -287,6 +365,65 @@ async function main() {
     await page.locator('.page-view.active [data-work-filter="all"]').click();
     checks.push('own waiting submissions and assigned reviews are separate; category focus survives rerender');
     checks.push('online expires after 90 seconds; hidden tabs do not heartbeat; returning preserves unsaved checklist');
+
+    const reviewCard = id => page.locator(`#tugas2 .phase-task-board .task-card[data-task-id="${id}"]`);
+    const captureReviewCard = async (id, filename) => {
+      await reviewCard(id).evaluate(el => el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }));
+      await reviewCard(id).screenshot({ path: path.join(output, filename), animations: 'disabled' });
+    };
+    const reviewWritesBefore = fixtures.calls.filter(call => call.resource === 'tasks' && call.method !== 'GET').length;
+    assert.match(await reviewCard('t2-review').locator('.task-review-highlight').innerText(), /Perlu kamu review/);
+    assert.match(await reviewCard('t2-dev-03').locator('.task-review-highlight').innerText(), /Reviewer: Farah/);
+    await page.locator('.page-view.active [data-task-view="kanban"]').click();
+    assert.equal(await reviewCard('t2-review').getAttribute('draggable'), 'false', 'Review highlight must not grant progress editing');
+    assert.equal(await reviewCard('t2-review').evaluate(el => el.classList.contains('is-readonly-progress')), true);
+    assert.match(await reviewCard('t2-revision').locator('.task-review-highlight').innerText(), /Perlu revisi/);
+    assert.match(await reviewCard('t2-revision').locator('.task-review-note-excerpt').innerText(), /Lengkapi hasil pengujian/);
+    await reviewCard('t2-revision').locator('.task-review-note-link').click();
+    assert.equal(await page.locator('#taskReviewNoteInput').inputValue(), 'Lengkapi hasil pengujian.');
+    await page.waitForFunction(() => {
+      const box = document.querySelector('#taskReviewNoteInput').getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= innerHeight;
+    });
+    await closeTask();
+    const assignedColor = await reviewCard('t2-review').evaluate(el => getComputedStyle(el).backgroundColor);
+    assert.notEqual(await reviewCard('t2-dev-03').evaluate(el => getComputedStyle(el).backgroundColor), assignedColor);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await reviewCard('t2-review').locator('.task-review-highlight-dot').evaluate(el => getComputedStyle(el).animationName), 'none');
+    for (const width of [360, 390, 768, 1365]) {
+      await page.setViewportSize({ width, height: 900 });
+      await reviewCard('t2-review').scrollIntoViewIfNeeded();
+      await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth + 1);
+      await captureReviewCard('t2-review', `review-card-${width}.png`);
+    }
+    await captureReviewCard('t2-dev-03', 'review-card-waiting.png');
+    await captureReviewCard('t2-revision', 'review-card-revision.png');
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    await captureReviewCard('t2-review', 'review-card-dark.png');
+    await page.evaluate(() => document.documentElement.removeAttribute('data-theme'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator('.page-view.active [data-task-view="list"]').click();
+    await captureReviewCard('t2-review', 'review-card-list-mobile.png');
+    await captureReviewCard('t2-revision', 'review-card-revision-list-mobile.png');
+    await reviewCard('t2-revision').locator('.task-review-note-link').click();
+    assert.equal(await page.locator('#taskReviewNoteInput').inputValue(), 'Lengkapi hasil pengujian.');
+    await closeTask();
+    await page.locator('.page-view.active [data-work-filter="revision"]').click();
+    const revisionAction = page.locator('#tugas2 .task-action-item[data-task-id="t2-revision"]');
+    assert.match(await revisionAction.innerText(), /Perlu revisi/);
+    assert.match(await revisionAction.innerText(), /Lihat catatan review/);
+    assert.match(await revisionAction.innerText(), /Reviewer: Farah/);
+    await revisionAction.evaluate(el => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await revisionAction.screenshot({ path: path.join(output, 'review-note-action-mobile.png'), animations: 'disabled' });
+    await revisionAction.click();
+    assert.equal(await page.locator('#taskReviewNoteInput').inputValue(), 'Lengkapi hasil pengujian.');
+    await closeTask();
+    await page.locator('.page-view.active [data-work-filter="all"]').click();
+    await page.setViewportSize({ width: 1365, height: 900 });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    assert.equal(await reviewCard('t2-review').locator('.task-review-highlight-dot').evaluate(el => getComputedStyle(el).animationIterationCount), '2');
+    assert.equal(fixtures.calls.filter(call => call.resource === 'tasks' && call.method !== 'GET').length, reviewWritesBefore);
+    checks.push('review/revision cards and action rows show status, reviewer, and notes; notes open from kanban/list/queue; readonly, responsive, dark mode, reduced motion; no task writes');
 
     fixtures.user = 'Febby';
     await page.reload(); await ready();

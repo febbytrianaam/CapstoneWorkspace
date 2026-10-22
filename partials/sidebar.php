@@ -44,6 +44,10 @@
         <span class="nav-icon">📜</span>
         <span>Rekam Jejak Audit</span>
       </button>
+      <button id="navReportsBtn" class="nav-item" data-target="reports" style="display:none">
+        <span class="nav-icon" aria-hidden="true">&#9636;</span>
+        <span>Laporan Tugas</span>
+      </button>
       <button id="navRbacBtn" class="nav-item" data-target="rbac">
         <span class="nav-icon">🔐</span>
         <span>RBAC & Permission</span>

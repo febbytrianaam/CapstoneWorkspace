@@ -21,6 +21,7 @@
 | Frontend orchestration | `js/app.js` |
 | Frontend data/API layer | `js/data.js` |
 | Frontend RBAC helper | `js/rbac.js` |
+| Task report model / XLSX / print | `js/task-reports.js`, `js/task-reports-ui.js`, local lazy-loaded `js/vendor/exceljs-4.4.0.min.js` |
 | API routing and authorization | `backend/api/index.php` |
 | Data access | `backend/Repository.php` |
 | BA draft/recovery storage | `backend/BeritaAcaraStorage.php` |
@@ -75,6 +76,7 @@ sequenceDiagram
 - `GET/POST/DELETE resource=guides`
 - `GET/POST/PUT/DELETE resource=document-archives`
 - `GET/PUT resource=progress-notes`
+- `GET resource=task-reports&phase=tugas1|tugas2|tugas3`: fixed-superadmin read-only report, gated by task-read and selected-phase permissions. Fetches tasks/checklists/phase note without audit or meeting data; client filters feed screen/XLSX/print outputs.
 - `GET/POST resource=rbac`
 - `GET resource=phase-access&phase=tugas1|tugas2|tugas3`: authenticated, page-permission-gated minimal team access summary.
 - `POST resource=presence`: authenticated foreground heartbeat updating the session user's existing last-seen timestamp; no audit entry per heartbeat.

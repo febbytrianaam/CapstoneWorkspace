@@ -29,3 +29,12 @@ test('confirmed server permission is authoritative even if browser cache is unav
   await rbac.set('member', 'pages', 'tugas2', true);
   assert.equal(rbac.matrix.member.pages.tugas2, false);
 });
+
+test('task reports remain superadmin-only even if a browser permission row is changed', () => {
+  const { rbac } = fixture();
+  rbac.matrix.member.pages.reports = true;
+  rbac.matrix.koordinator.pages.reports = true;
+  assert.equal(rbac.canPage({ role: 'member' }, 'reports'), false);
+  assert.equal(rbac.canPage({ role: 'koordinator' }, 'reports'), false);
+  assert.equal(rbac.canPage({ role: 'superadmin' }, 'reports'), true);
+});

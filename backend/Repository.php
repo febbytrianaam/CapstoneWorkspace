@@ -512,6 +512,29 @@ final class Repository
         return $this->mapUser($row);
     }
 
+    public function taskReport(string $phase, array $viewer): array
+    {
+        if (($viewer['role'] ?? '') !== 'superadmin') {
+            throw new RuntimeException('Laporan tugas hanya tersedia untuk superadmin.');
+        }
+        if (!in_array($phase, ['tugas1', 'tugas2', 'tugas3'], true)) {
+            throw new InvalidArgumentException('Tahap laporan tidak valid.');
+        }
+        $stmt = $this->db->prepare('SELECT * FROM tasks WHERE phase = :phase ORDER BY id');
+        $stmt->execute(['phase' => $phase]);
+        $tasks = array_map(fn (array $row): array => $this->mapTask($row, false), $stmt->fetchAll());
+        $noteStmt = $this->db->prepare('SELECT * FROM phase_progress_notes WHERE phase = :phase LIMIT 1');
+        $noteStmt->execute(['phase' => $phase]);
+        $note = $noteStmt->fetch();
+        return [
+            'phase' => $phase,
+            'generatedAt' => time() * 1000,
+            'generatedBy' => $viewer['name'] ?? '',
+            'tasks' => $tasks,
+            'progressNote' => $note ? $this->mapPhaseProgressNote($note) : null,
+        ];
+    }
+
     public function tasks(bool $includeMeetings = true): array
     {
         $tasks = $this->db->query('SELECT * FROM tasks ORDER BY id')->fetchAll();

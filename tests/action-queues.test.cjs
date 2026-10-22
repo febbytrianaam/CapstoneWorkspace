@@ -20,6 +20,14 @@ function queues(role = 'member') {
     escapeHtml: value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
   };
   vm.runInNewContext(source.slice(start, end), context);
+  const highlightStart = source.indexOf('  function getTaskReviewHighlight(');
+  const highlightEnd = source.indexOf('  function renderTaskListHtml(', highlightStart);
+  assert.ok(highlightStart > 0 && highlightEnd > highlightStart);
+  vm.runInNewContext(source.slice(highlightStart, highlightEnd), context);
+  const metaStart = source.indexOf('  function getReviewStatusMeta(');
+  const metaEnd = source.indexOf('  function isTaskCompletionVerified(', metaStart);
+  assert.ok(metaStart > 0 && metaEnd > metaStart);
+  vm.runInNewContext(source.slice(metaStart, metaEnd), context);
   const tasks = [
     { id: 'mine', pic: 'Me', reviewer: 'Other', reviewStatus: 'none' },
     { id: 'waiting', pic: 'Me', reviewer: 'Other', reviewStatus: 'submitted' },
@@ -68,4 +76,47 @@ test('queue markup escapes user text, handles missing checklist, and bounds nume
   assert.match(html, /Tanpa checklist/);
   assert.doesNotMatch(html, /<progress/);
   assert.match(c.renderPhaseActionItem({ ...task, checklist: ['one'], checklistDone: [true, true] }, 'mine'), /max="1" value="1"/);
+});
+
+test('review card highlights distinguish the assigned reviewer from owners and other viewers', () => {
+  for (const role of ['member', 'superadmin', 'koordinator']) {
+    const { context: c, tasks, user } = queues(role);
+    const before = JSON.stringify(tasks);
+    assert.equal(c.getTaskReviewHighlight(tasks[2], user).tone, 'assigned');
+    assert.equal(c.getTaskReviewHighlight(tasks[1], user).tone, 'waiting');
+    assert.equal(c.getTaskReviewHighlight(tasks[3], user).tone, 'waiting');
+    assert.equal(c.getTaskReviewHighlight(tasks[0], user), null);
+    assert.equal(c.getTaskReviewHighlight(tasks[4], user).tone, 'revision');
+    assert.equal(c.getTaskReviewHighlight(tasks[5], user), null);
+    assert.equal(c.getTaskReviewHighlight(tasks[6], user), null);
+    c.canReviewTask = () => false;
+    assert.equal(c.getTaskReviewHighlight(tasks[2], user).tone, 'waiting');
+    assert.equal(JSON.stringify(tasks), before);
+  }
+});
+
+test('review highlight labels escape names and handle an unassigned reviewer', () => {
+  const { context: c, tasks, user } = queues();
+  const html = c.renderTaskReviewHighlight(c.getTaskReviewHighlight({ ...tasks[1], reviewer: '<script>bad()</script>' }, user));
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(c.renderTaskReviewHighlight(c.getTaskReviewHighlight({ ...tasks[1], reviewer: '' }, user)), /Belum ditentukan/);
+  assert.equal(c.renderTaskReviewHighlight(null), '');
+});
+
+test('revision notes and status are available in action queues and shared card/list note markup', () => {
+  const { context: c, tasks, user } = queues();
+  const task = { ...tasks[4], reviewNote: 'Perjelas alur gudang.\nTambahkan <contoh>.' };
+  c.activeWorkFilter = 'revision';
+  const html = c.renderPhaseActionSection('tugas2', [task], user);
+  assert.match(html, /Perlu revisi/);
+  assert.match(html, /Reviewer: Other/);
+  assert.match(html, /Perjelas alur gudang/);
+  assert.match(html, /&lt;contoh&gt;/);
+  assert.match(html, /Lihat catatan review/);
+  assert.match(html, /data-open-review-notes="true"/);
+  assert.doesNotMatch(html, /<button type="button" class="task-review-note-link"/, 'No nested note button inside the action button');
+  assert.match(c.renderTaskReviewNote(task, true), /<button type="button" class="task-review-note-link"/);
+  assert.match(c.renderTaskReviewNote({ ...task, reviewNote: '' }), /Belum ada catatan review/);
+  assert.equal(c.renderTaskReviewNote(tasks[0]), '');
 });

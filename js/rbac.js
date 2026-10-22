@@ -121,6 +121,7 @@
       return Boolean(MATRIX[roleOf(user)]?.[area]?.[action]);
     },
     canPage(user, page) {
+      if (page === 'reports') return roleOf(user) === 'superadmin';
       if (page === 'audit') {
         return roleOf(user) === 'superadmin';
       }

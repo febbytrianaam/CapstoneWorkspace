@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const BERITA_ACARA_DRAFTS_KEY = 'capstone_berita_acara_drafts_v1';
   const MEMBER_TOUR_ENABLED = false;
   const MEMBER_TOUR_STORAGE_PREFIX = 'capstone_member_tour_done_v1:';
-  const VALID_PAGE_IDS = ['dashboard', 'tugas1', 'tugas2', 'tugas3', 'flow', 'documents', 'users', 'audit', 'rbac'];
+  const VALID_PAGE_IDS = ['dashboard', 'tugas1', 'tugas2', 'tugas3', 'flow', 'documents', 'users', 'audit', 'reports', 'rbac'];
   const WIB_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
   const DOCUMENT_ARCHIVE_CATEGORIES = {
     berita_acara: 'Berita Acara',
@@ -1027,6 +1027,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!await confirmDiscardChanges()) return;
       runUiAction(logoutBtn, async () => {
         await window.capstoneStore.logout();
+        window.TaskReportUI?.clear();
         window.location.reload();
       });
     });
@@ -1214,6 +1215,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (pageId === 'dashboard') return 'Dasbor';
     if (pageId === 'users') return 'Manajemen Pengguna';
     if (pageId === 'audit') return 'Audit Log';
+    if (pageId === 'reports') return 'Laporan Tugas';
     if (pageId === 'rbac') return 'RBAC';
     if (pageId === 'flow') return 'Alur Kerja';
     if (pageId === 'documents') return 'Arsip Dokumen';
@@ -1271,6 +1273,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (safePageId === 'audit') {
       headerTitle.textContent = 'Rekam Jejak Audit';
       breadcrumbLabel.textContent = 'Audit Trail Log';
+    } else if (safePageId === 'reports') {
+      headerTitle.textContent = 'Laporan Tugas';
+      breadcrumbLabel.textContent = 'Rekap Pekerjaan Tim';
     } else if (safePageId === 'rbac') {
       headerTitle.textContent = 'RBAC & Permission';
       breadcrumbLabel.textContent = 'Role Based Access Control';
@@ -1326,6 +1331,8 @@ document.addEventListener('DOMContentLoaded', () => {
       renderUserManagementView();
     } else if (currentPage === 'audit') {
       renderAuditLogView();
+    } else if (currentPage === 'reports') {
+      window.TaskReportUI?.render();
     } else if (currentPage === 'rbac') {
       renderRbacView();
     } else if (currentPage === 'flow') {
@@ -1648,15 +1655,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const needsAssignment = next.title === 'Penanggung jawab perlu diperbarui';
     const tone = needsAssignment || task.reviewStatus === 'revision_requested' ? 'revision' : mode;
     const state = needsAssignment ? next.title : mode === 'waiting' ? `Menunggu ${task.reviewer || 'reviewer'}` : mode === 'review' ? 'Siap diperiksa' : next.title;
-    const action = mode === 'review' ? 'Periksa' : mode === 'waiting' ? 'Lihat pengajuan' : task.reviewStatus === 'revision_requested' ? 'Perbaiki' : 'Buka tugas';
-    return `<button type="button" class="task-action-item is-${tone}" data-task-id="${escapeHtml(task.id)}" aria-label="${escapeHtml(`${action}: ${task.title}`)}">
+    const hasReviewNote = Boolean(task.reviewNote?.trim()) || task.reviewStatus === 'revision_requested';
+    const action = hasReviewNote ? 'Lihat catatan review' : mode === 'review' ? 'Periksa' : mode === 'waiting' ? 'Lihat pengajuan' : 'Buka tugas';
+    const review = getReviewStatusMeta(task.reviewStatus || 'none');
+    return `<button type="button" class="task-action-item is-${tone}" data-task-id="${escapeHtml(task.id)}" ${hasReviewNote ? 'data-open-review-notes="true"' : ''} aria-label="${escapeHtml(`${action}: ${task.title}`)}">
       <span class="task-action-main">
-        <span class="task-action-meta"><span class="task-card-code">${escapeHtml(task.id)}</span>${mode === 'review' || mode === 'revision' ? `<span>PIC: ${escapeHtml(task.pic)}</span>` : ''}</span>
+        <span class="task-action-meta"><span class="task-card-code">${escapeHtml(task.id)}</span><span class="task-review-badge is-${review.tone}">${escapeHtml(review.label)}</span>${mode === 'review' || mode === 'revision' ? `<span>PIC: ${escapeHtml(task.pic)}</span>` : ''}</span>
         <strong class="task-action-title">${escapeHtml(task.title)}</strong>
         <span class="task-action-state">${escapeHtml(state)}</span>
+        <span class="task-action-reviewer">Reviewer: ${escapeHtml(task.reviewer || 'Belum ditentukan')}</span>
+        ${renderTaskReviewNote(task)}
       </span>
       <span class="task-action-checklist">${total ? `<span>Checklist <strong>${done}/${total}</strong></span><progress max="${total}" value="${done}" aria-label="${escapeHtml(`Checklist ${task.id}: ${done} dari ${total}`)}"></progress>` : '<span>Tanpa checklist</span>'}</span>
-      <span class="task-action-open"><span>${action}</span><span aria-hidden="true">\u203a</span></span>
+      <span class="task-action-open"><span>${hasReviewNote ? '' : action}</span><span aria-hidden="true">\u203a</span></span>
     </button>`;
   }
 
@@ -3116,15 +3127,42 @@ document.addEventListener('DOMContentLoaded', () => {
     return filteredTasks;
   }
 
+  function getTaskReviewHighlight(task, user) {
+    if (task.archivedAt) return null;
+    if (task.reviewStatus === 'revision_requested') return { tone: 'revision', label: 'Perlu revisi', detail: `Reviewer: ${task.reviewer || 'Belum ditentukan'}` };
+    if (task.reviewStatus !== 'submitted') return null;
+    const assigned = task.reviewer === user?.name && !isTaskPic(task, user) && canReviewTask(task, user);
+    return {
+      tone: assigned ? 'assigned' : 'waiting',
+      label: assigned ? 'Perlu kamu review' : 'Menunggu review',
+      detail: assigned ? `Diajukan oleh ${task.pic || 'PIC'}` : `Reviewer: ${task.reviewer || 'Belum ditentukan'}`
+    };
+  }
+
+  function renderTaskReviewHighlight(highlight) {
+    if (!highlight) return '';
+    return `<div class="task-review-highlight"><span class="task-review-highlight-dot" aria-hidden="true"></span><span><strong>${escapeHtml(highlight.label)}</strong><small>${escapeHtml(highlight.detail)}</small></span></div>`;
+  }
+
+  function renderTaskReviewNote(task, interactive = false) {
+    const note = task.reviewNote?.trim() || '';
+    if (!note && task.reviewStatus !== 'revision_requested') return '';
+    const command = interactive
+      ? '<button type="button" class="task-review-note-link">Lihat catatan review <span aria-hidden="true">\u2192</span></button>'
+      : '<span class="task-review-note-link">Lihat catatan review <span aria-hidden="true">\u2192</span></span>';
+    return `<span class="task-review-note-preview"><span class="task-review-note-excerpt">${escapeHtml(note || 'Belum ada catatan review.')}</span>${command}</span>`;
+  }
+
   function renderTaskListHtml(phaseKey, tasks) {
     const user = window.capstoneStore.getCurrentUser();
     return `<div class="task-list" role="list" aria-label="Daftar ${escapeHtml(PHASE_META[phaseKey].short)}">
       ${tasks.map(task => {
         const review = getReviewStatusMeta(task.reviewStatus || 'none');
         const deadline = getTaskDeadlineMeta(task);
-        return `<article role="listitem" class="task-card task-list-row ${task.archivedAt ? 'is-archived' : ''}" data-task-id="${escapeHtml(task.id)}" tabindex="0">
-          <div class="task-list-main"><span class="task-card-code">${escapeHtml(task.id)}</span><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(getTaskNextAction(task).title)}</p></div>
-          <div class="task-list-meta"><span>${escapeHtml(task.pic)}</span><span class="task-review-badge is-${review.tone}">${escapeHtml(task.status)}</span>${task.reviewer ? `<span class="task-review-badge is-${review.tone}">${review.label}</span>` : ''}${task.archivedAt ? '<span class="task-archive-badge">Arsip</span>' : ''}${!canUpdateTaskProgress(task, user) ? `<span class="task-readonly-badge">${canReviewTask(task, user) ? 'Reviewer' : 'Hanya lihat'}</span>` : ''}</div>
+        const highlight = getTaskReviewHighlight(task, user);
+        return `<article role="listitem" class="task-card task-list-row ${highlight ? `has-review-highlight is-review-${highlight.tone}` : ''} ${task.archivedAt ? 'is-archived' : ''}" data-task-id="${escapeHtml(task.id)}" tabindex="0">
+          <div class="task-list-main">${renderTaskReviewHighlight(highlight)}<span class="task-card-code">${escapeHtml(task.id)}</span><h3>${escapeHtml(task.title)}</h3><p>${escapeHtml(getTaskNextAction(task).title)}</p>${renderTaskReviewNote(task, true)}</div>
+          <div class="task-list-meta"><span>${escapeHtml(task.pic)}</span><span class="task-review-badge is-${review.tone}">${escapeHtml(task.status)}</span>${task.reviewer && !highlight ? `<span class="task-review-badge is-${review.tone}">${review.label}</span>` : ''}${task.archivedAt ? '<span class="task-archive-badge">Arsip</span>' : ''}${!canUpdateTaskProgress(task, user) ? `<span class="task-readonly-badge">${canReviewTask(task, user) ? 'Reviewer' : 'Hanya lihat'}</span>` : ''}</div>
           <div class="task-list-tail"><span class="priority-badge ${task.priority}">${escapeHtml(task.priority)}</span><span>${deadline ? escapeHtml(deadline.label) : 'Tanpa batas waktu'}</span><span>${(task.checklistDone || []).filter(Boolean).length}/${(task.checklist || []).length} sub-tugas</span></div>
         </article>`;
       }).join('') || '<p class="muted-empty">Tidak ada tugas yang sesuai filter.</p>'}
@@ -3152,7 +3190,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
     pageView.querySelectorAll('.task-action-item').forEach(button => {
-      button.addEventListener('click', () => openEditTaskModal(button.dataset.taskId));
+      button.addEventListener('click', () => button.dataset.openReviewNotes ? openTaskReviewNotes(button.dataset.taskId) : openEditTaskModal(button.dataset.taskId));
     });
   }
 
@@ -3338,8 +3376,9 @@ document.addEventListener('DOMContentLoaded', () => {
             </label>
           ` : ''}
         </div>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
+        <div class="phase-toolbar-actions">
           ${currentUser?.role === 'superadmin' ? `<button class="btn btn-secondary copy-phase-tasks-btn" data-phase="${phaseKey}" title="Salin daftar tugas yang sedang tampil untuk dibandingkan di ChatGPT">📋 Salin Tugas</button>` : ''}
+          ${currentUser?.role === 'superadmin' ? `<button type="button" class="btn btn-secondary phase-task-report-btn" data-phase="${phaseKey}"><span aria-hidden="true">&#9636;</span> Laporan</button>` : ''}
           <button class="btn btn-secondary add-meeting-page-btn" data-phase="${phaseKey}">🗓️ + Buat Pertemuan</button>
           <button class="btn btn-primary add-task-btn" data-phase="${phaseKey}">+ Tambah Tugas</button>
         </div>
@@ -3532,6 +3571,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     pageView.querySelectorAll('.copy-phase-tasks-btn').forEach(btn => {
       btn.addEventListener('click', () => copyPhaseTasksForChatGpt(btn.dataset.phase));
+    });
+    pageView.querySelectorAll('.phase-task-report-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (window.capstoneStore.getCurrentUser()?.role !== 'superadmin') return;
+        window.TaskReportUI?.render({ phase: btn.dataset.phase });
+        setPage('reports');
+      });
     });
 
     pageView.querySelectorAll('.meeting-task-link').forEach(btn => {
@@ -3800,10 +3846,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const isArchived = Boolean(t.archivedAt);
     const reviewMeta = getReviewStatusMeta(t.reviewStatus);
     const deadlineMeta = getTaskDeadlineMeta(t);
+    const highlight = getTaskReviewHighlight(t, currentUser);
 
     return `
-      <div class="task-card ${isReadonlyProgress ? 'is-readonly-progress' : ''} ${isArchived ? 'is-archived' : ''}" draggable="${canUpdate && !isArchived ? 'true' : 'false'}" data-task-id="${t.id}" style="${isMine ? 'border-color: var(--ut-blue-primary);' : ''}">
+      <div class="task-card ${highlight ? `has-review-highlight is-review-${highlight.tone}` : ''} ${isReadonlyProgress ? 'is-readonly-progress' : ''} ${isArchived ? 'is-archived' : ''}" draggable="${canUpdate && !isArchived ? 'true' : 'false'}" data-task-id="${t.id}" style="${isMine && !highlight ? 'border-color: var(--ut-blue-primary);' : ''}">
         <div class="task-priority-indicator" style="background: ${priorityColors[t.priority] || 'transparent'}"></div>
+        ${renderTaskReviewHighlight(highlight)}
         <div class="card-header-row">
           <div class="card-title-stack">
             <span class="task-card-code">${escapeHtml(t.id || '-')}</span>
@@ -3812,12 +3860,13 @@ document.addEventListener('DOMContentLoaded', () => {
           <div style="display:flex; align-items:center; gap:0.35rem; flex-wrap:wrap; justify-content:flex-end;">
             ${isArchived ? '<span class="task-archive-badge">Arsip</span>' : ''}
             ${isReadonlyProgress ? `<span class="task-readonly-badge">${canReviewTask(t, currentUser) ? 'Reviewer' : 'Hanya lihat'}</span>` : ''}
-            ${t.reviewer ? `<span class="task-review-badge is-${reviewMeta.tone}">${reviewMeta.label}</span>` : ''}
+            ${t.reviewer && !highlight ? `<span class="task-review-badge is-${reviewMeta.tone}">${reviewMeta.label}</span>` : ''}
             <span class="priority-badge ${t.priority}">${t.priority}</span>
           </div>
         </div>
         <div class="card-description">${escapeHtml(t.description || '')}</div>
         <div class="task-action-summary">${escapeHtml(getTaskNextAction(t).title)}</div>
+        ${renderTaskReviewNote(t, true)}
         ${deadlineMeta ? `
           <div class="task-deadline-badge is-${deadlineMeta.tone}" title="${escapeHtml(deadlineMeta.date)}">
             <span>Batas waktu</span>
@@ -4838,7 +4887,11 @@ document.addEventListener('DOMContentLoaded', () => {
           card.style.opacity = '1';
         });
       }
-      card.addEventListener('click', () => {
+      card.addEventListener('click', event => {
+        if (event.target.closest('.task-review-note-link')) {
+          openTaskReviewNotes(task.id);
+          return;
+        }
         if (canReadTaskDetails(task, currentUser)) openEditTaskModal(card.dataset.taskId);
       });
       card.querySelectorAll('a').forEach(link => {
@@ -5460,6 +5513,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (deleteTaskBtn) deleteTaskBtn.style.display = 'none';
 
     showFormModal(taskModalBackdrop);
+  }
+
+  function openTaskReviewNotes(taskId) {
+    const task = window.capstoneStore.getById(taskId);
+    if (!canReadTaskDetails(task, window.capstoneStore.getCurrentUser())) return;
+    openEditTaskModal(taskId);
+    requestAnimationFrame(() => {
+      if (document.getElementById('taskIdInput').value === taskId && document.getElementById('taskModalBackdrop').classList.contains('active')) {
+        document.querySelector('#taskModalBackdrop .task-review-panel')?.scrollIntoView({ block: 'center', behavior: 'instant' });
+      }
+    });
   }
 
   function openEditTaskModal(taskId) {

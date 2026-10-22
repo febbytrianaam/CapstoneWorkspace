@@ -12,6 +12,7 @@
 - Login/logout, session cookies, role checks, task CRUD, user CRUD, RBAC, notifications, audit logs, user activity logs.
 - Superadmin-only account deactivation/reactivation preserves history, prevents login/new assignments, and excludes inactive accounts from the generated BA roster and current presence/workload. All active members attending produces `-` in the absent column. See [member status](../30_implemented/2026-10-18-member-account-status/implementation_report.md).
 - Tugas 1, Tugas 2, and Tugas 3 phase views.
+- Mobile phase navigation keeps Kanban columns within the screen even with long unbroken text and a saved Kanban preference; list mode and user-controlled browser zoom remain available.
 - Dashboard summaries, personal task section, review queue, meetings, workload, charts.
 - Kanban task board with status, PIC, reviewer, review workflow, checklist, dates, archive behavior.
 - Phase progress notes with admin input and member read-only visibility.
@@ -20,8 +21,10 @@
 - Arsip Dokumen with category filter, upload, edit metadata, view, download, and delete.
 - Berita Acara form, preview in new tab, printable portrait output, manual BA upload linked to meetings.
 - Superadmin-only audit and user activity visibility.
+- Superadmin-only Laporan Tugas, separate from audit logs, with phase/PIC/status/review/archive filters, latest-server-data Excel exports (Ringkasan, Tugas, Subtugas), and new-tab print/PDF previews. Phase shortcuts open the matching report; downloads are local, not saved automatically to Arsip Dokumen. See [reports](../30_implemented/2026-10-22-task-reports/implementation_report.md).
 - Phase action queues, contextual task next steps, task-code search and review filters, Kanban/list modes, archive search/sort, protected forms, explicit refresh status, and lazy audit loading.
 - Tindak Lanjut now distinguishes own active work, revisions, assigned personal reviews, and own submissions waiting for review. Colored counts, brief reduced-motion-aware highlights, checklist ratios, and expandable previews provide a clearer daily work surface without changing task data or permissions.
+- Kanban/list cards use teal Perlu kamu review, amber Menunggu review, or rose Perlu revisi, with contextual names, dark-mode colors, and a short reduced-motion-aware indicator pulse. Tindak Lanjut rows also show review status, reviewer, note excerpts, and Lihat catatan review; notes can be opened from queues or either board view. Archive and task permissions are unchanged.
 - Datastore mutations await server confirmation before updating local business state; task edits send deltas instead of meeting snapshots.
 - Isolated tests in `tests/store.test.cjs` and `tests/workspace-ui.cjs`.
 - Tugas 1/2/3 show team phase access with full WIB timestamps and approximate app-wide Online/Offline presence. Members receive only the minimal summary, not audit history or account management.

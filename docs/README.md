@@ -56,6 +56,9 @@ Existing project-specific reference notes currently in `docs/`:
 - [2026-10-18 BA print layout and naming](30_implemented/2026-10-18-ba-print-layout-and-naming/implementation_report.md)
 - [2026-10-18 Member account status](30_implemented/2026-10-18-member-account-status/implementation_report.md)
 - [2026-10-20 Action queue refresh](30_implemented/2026-10-20-action-queue-refresh/implementation_report.md)
+- [2026-10-20 Kanban review highlights](30_implemented/2026-10-20-kanban-review-highlight/implementation_report.md)
+- [2026-10-22 Phase task reports](30_implemented/2026-10-22-task-reports/implementation_report.md)
+- [2026-10-22 Mobile phase width](30_implemented/2026-10-22-mobile-phase-width/implementation_report.md)
 
 For every future meaningful shipped feature, create:
 

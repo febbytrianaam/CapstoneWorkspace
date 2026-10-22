@@ -115,6 +115,23 @@ try {
 
     $currentUser = requireAuthenticatedUser($repo);
 
+    if ($resource === 'task-reports') {
+        if ($currentUser['role'] !== 'superadmin') Response::error('Laporan tugas hanya tersedia untuk superadmin.', 403);
+        if ($method !== 'GET') Response::error('Metode tidak tersedia.', 405);
+        $phase = (string) ($_GET['phase'] ?? '');
+        if (!in_array($phase, ['tugas1', 'tugas2', 'tugas3'], true)) Response::error('Tahap laporan tidak valid.', 422);
+        foreach ($repo->rbacPermissions() as $permission) {
+            if ($permission['role'] === 'superadmin'
+                && (($permission['area'] === 'tasks' && $permission['permission'] === 'read')
+                    || ($permission['area'] === 'pages' && $permission['permission'] === $phase))
+                && !(bool) (int) $permission['allowed']) {
+                Response::error('Anda tidak memiliki izin untuk laporan tahap ini.', 403);
+            }
+        }
+        header('Cache-Control: no-store');
+        Response::json(['ok' => true, 'data' => $repo->taskReport($phase, $currentUser)]);
+    }
+
     if (in_array($resource, ['ba-drafts', 'browser-backups'], true)) {
         if (!in_array($currentUser['role'], ['superadmin', 'koordinator'], true)
             || ($resource === 'browser-backups' && $method === 'GET' && $currentUser['role'] !== 'superadmin')) {

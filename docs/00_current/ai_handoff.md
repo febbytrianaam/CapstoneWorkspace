@@ -35,10 +35,13 @@ Capstone Workspace is a PHP/MySQL coordination app for a Universitas Terbuka Cap
 - Keep Cloudflare origin HTTP unless local TLS is explicitly configured.
 - Do not expose Cloudflare tunnel tokens, passwords, private meeting links, or real data dumps.
 - Superadmin-only audit/activity visibility is intentional.
+- Task reports are also fixed-superadmin-only, independent of audit logs. Preserve API role/phase/read checks and fresh server fetches for each export; never export cached Kanban data or upload/downloaded reports into business storage automatically. XLSX uses a locally vendored writer; do not send report contents to external services.
 - Members may see a minimal phase-access/presence summary in Tugas 1/2/3, not detailed audit records. Online is approximate app-wide presence, not presence within the selected phase.
 - Keep phase sections ordered as banner, progress summary, team access, then action queues and the task board. Moving these sections must not change saved notes or presence behavior.
+- Preserve zero intrinsic minimum widths and wrapped long text in mobile Kanban. Validate sidebar navigation with touch-enabled mobile contexts and a saved Kanban preference; desktop viewport resizing alone missed the previous shrink-to-fit regression. Do not disable user zoom to mask overflow.
 - Member reviewer selection is read-only; superadmin sets reviewers manually.
 - Personal Tindak Lanjut review queues are scoped to the assigned reviewer and exclude their own submissions, which appear in a separate waiting queue. Do not broaden this queue back to every pending review for managers; the separate manager-wide review section remains available. Color/pulse and expanded previews are presentation-only, with no database writes.
+- Kanban/list pending-review highlights follow the same assigned-reviewer distinction. They never grant editing or drag permissions, and archived tasks must not receive pending-review highlights.
 
 ## Key Files And Folders
 
